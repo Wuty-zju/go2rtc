@@ -157,7 +157,7 @@ func (c *Conn) worker() {
 			}
 
 			if err != nil {
-				c.err = fmt.Errorf("%s: %w", "cs2", err)
+				c.err = fmt.Errorf("cs2: channel %d: %w", ch, err)
 				return
 			}
 
