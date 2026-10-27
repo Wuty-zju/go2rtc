@@ -27,9 +27,10 @@ type Producer struct {
 	url      string
 	template string
 
-	conn      core.Producer
-	receivers []*core.Receiver
-	senders   []*core.Receiver
+	conn           core.Producer
+	receivers      []*core.Receiver
+	receiverMedias []*core.Media
+	senders        []*core.Receiver
 
 	state    state
 	mu       sync.Mutex
@@ -102,6 +103,7 @@ func (p *Producer) GetTrack(media *core.Media, codec *core.Codec) (*core.Receive
 	}
 
 	p.receivers = append(p.receivers, track)
+	p.receiverMedias = append(p.receiverMedias, media)
 
 	if p.state == stateMedias {
 		p.state = stateTracks
@@ -203,43 +205,58 @@ func (p *Producer) reconnect(workerID, retry int) {
 		return
 	}
 
-	mediaIDs := make(map[*core.Codec]string)
-	for _, media := range p.conn.GetMedias() {
-		for _, codec := range media.Codecs {
-			mediaIDs[codec] = media.ID
+	medias := conn.GetMedias()
+	used := make([]bool, len(p.receivers))
+	targets := make(map[*core.Receiver]bool)
+	type mediaID struct{ kind, id string }
+	stable := make(map[mediaID]bool)
+	for _, media := range medias {
+		if media.Direction == core.DirectionRecvonly && media.ID != "" {
+			stable[mediaID{media.Kind, media.ID}] = true
 		}
 	}
-	used := make([]bool, len(p.receivers))
-	medias := conn.GetMedias()
-	matched := make([]bool, len(medias))
 
-	// Reserve every stable ID before codec-only fallback can consume its receiver.
+	// Reserve stable identities even when obtaining one of their tracks fails.
 	for pass := 0; pass < 2; pass++ {
-		for n, media := range medias {
-			if matched[n] || media.Direction != core.DirectionRecvonly {
+		for _, media := range medias {
+			if media.Direction != core.DirectionRecvonly {
 				continue
 			}
-		receivers:
 			for i, receiver := range p.receivers {
-				if used[i] || pass == 0 && (media.ID == "" || mediaIDs[receiver.Codec] != media.ID) {
+				previous := p.receiverMedias[i]
+				if used[i] || previous.Kind != media.Kind {
+					continue
+				}
+				if pass == 0 {
+					if media.ID == "" || previous.ID != media.ID {
+						continue
+					}
+				} else if stable[mediaID{previous.Kind, previous.ID}] {
 					continue
 				}
 				codec := media.MatchCodec(receiver.Codec)
 				if codec == nil {
 					continue
 				}
-
 				track, err := conn.GetTrack(media, codec)
-				if err != nil {
+				if err != nil || targets[track] {
 					continue
 				}
-
 				receiver.Replace(track)
 				p.receivers[i] = track
-				used[i] = true
-				matched[n] = true
-				break receivers
+				p.receiverMedias[i] = media
+				used[i], targets[track] = true, true
 			}
+		}
+	}
+
+	// Keep unavailable tracks attached to the stream, not the connection we stop.
+	// A later reconnect can restore them without losing their consumers or IDs.
+	for i, receiver := range p.receivers {
+		if !used[i] {
+			track := core.NewReceiver(p.receiverMedias[i], receiver.Codec)
+			receiver.Replace(track)
+			p.receivers[i] = track
 		}
 	}
 
@@ -281,6 +298,9 @@ func (p *Producer) stop() {
 
 	log.Debug().Msgf("[streams] stop producer url=%s", p.url)
 
+	for _, receiver := range p.receivers {
+		receiver.Close()
+	}
 	if p.conn != nil {
 		_ = p.conn.Stop()
 		p.conn = nil
@@ -288,5 +308,6 @@ func (p *Producer) stop() {
 
 	p.state = stateNone
 	p.receivers = nil
+	p.receiverMedias = nil
 	p.senders = nil
 }
