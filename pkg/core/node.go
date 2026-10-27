@@ -45,12 +45,11 @@ func (n *Node) AppendChild(child *Node) {
 	childs := make([]*Node, len(n.childs)+1)
 	copy(childs, n.childs)
 	childs[len(n.childs)] = child
-	n.childs = childs
-	n.mu.Unlock()
-
 	child.mu.Lock()
 	child.parent = n
 	child.mu.Unlock()
+	n.childs = childs
+	n.mu.Unlock()
 }
 
 func (n *Node) RemoveChild(child *Node) {
@@ -70,6 +69,7 @@ func (n *Node) RemoveChild(child *Node) {
 func (n *Node) Close() {
 	n.mu.Lock()
 	parent, childs := n.parent, n.childs
+	n.parent = nil
 	n.mu.Unlock()
 	if parent != nil {
 		parent.RemoveChild(n)
@@ -87,18 +87,26 @@ func (n *Node) Close() {
 }
 
 func MoveNode(dst, src *Node) {
+	if dst == src {
+		return
+	}
 	src.mu.Lock()
 	childs := src.childs
 	src.childs = nil
 	src.mu.Unlock()
 
 	dst.mu.Lock()
-	dst.childs = childs
-	dst.mu.Unlock()
-
+	// Preserve existing subscribers and skip children closed during the move.
+	merged := make([]*Node, len(dst.childs), len(dst.childs)+len(childs))
+	copy(merged, dst.childs)
 	for _, child := range childs {
 		child.mu.Lock()
-		child.parent = dst
+		if child.parent == src {
+			child.parent = dst
+			merged = append(merged, child)
+		}
 		child.mu.Unlock()
 	}
+	dst.childs = merged
+	dst.mu.Unlock()
 }
