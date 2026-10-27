@@ -54,6 +54,7 @@ func (p *selectionSource) emit(t *testing.T, id string, sequence uint16) {
 type selectionConsumer struct {
 	core.Connection
 	packets chan uint16
+	discard bool
 }
 
 func newSelectionConsumer(t *testing.T, query string) *selectionConsumer {
@@ -72,7 +73,11 @@ func newSelectionConsumer(t *testing.T, query string) *selectionConsumer {
 }
 func (c *selectionConsumer) AddTrack(media *core.Media, codec *core.Codec, track *core.Receiver) error {
 	sender := core.NewSender(media, codec)
-	sender.Handler = func(p *core.Packet) { c.packets <- p.SequenceNumber }
+	sender.Handler = func(p *core.Packet) {
+		if !c.discard {
+			c.packets <- p.SequenceNumber
+		}
+	}
 	sender.WithParent(track)
 	sender.Start()
 	c.Senders = append(c.Senders, sender)
@@ -190,5 +195,49 @@ func TestSourceMediaSelectionQueryContract(t *testing.T) {
 				consumer.expect(t, 100+uint16(i))
 			}
 		})
+	}
+}
+
+func TestSourceMediaSelectionConcurrentJoin(t *testing.T) {
+	source := newSelectionSource()
+	for _, media := range source.Medias {
+		_, _ = source.GetTrack(media, media.Codecs[0])
+	}
+	const scheme = "test-selection-concurrent"
+	HandleFunc(scheme, func(string) (core.Producer, error) { return source, nil })
+	defer delete(handlers, scheme)
+	stream := NewStream(scheme + ":camera")
+	front := newSelectionConsumer(t, "video=copy@front")
+	front.discard = true
+	if err := stream.AddConsumer(front); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan struct{})
+	var workers sync.WaitGroup
+	workers.Add(1)
+	go func() {
+		defer workers.Done()
+		ticker := time.NewTicker(100 * time.Microsecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-ticker.C:
+				for _, track := range source.Receivers {
+					track.Input(&core.Packet{})
+				}
+			}
+		}
+	}()
+	defer func() { close(done); workers.Wait(); stream.RemoveConsumer(front) }()
+	for range 100 {
+		rear := newSelectionConsumer(t, "video=copy@rear-Lens&audio")
+		rear.discard = true
+		if err := stream.AddConsumer(rear); err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(time.Millisecond)
+		stream.RemoveConsumer(rear)
 	}
 }
