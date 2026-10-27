@@ -197,6 +197,9 @@ func (c *Conn) ReadCommand() (cmd uint32, data []byte, err error) {
 	if !ok {
 		return 0, nil, c.Error()
 	}
+	if len(buf) < 4 {
+		return 0, nil, fmt.Errorf("cs2: command header too small")
+	}
 	cmd = binary.LittleEndian.Uint32(buf)
 	data = buf[4:]
 	return

@@ -36,3 +36,11 @@ func TestUndrainedControlQueueTerminatesMedia(t *testing.T) {
 		t.Fatalf("undrained notifications must identify the channel that terminated the shared transport: %v", err)
 	}
 }
+
+func TestReadCommandRejectsTruncatedHeader(t *testing.T) {
+	c := &Conn{channels: [4]*dataChannel{newDataChannel(0, 1)}}
+	c.channels[0].popBuf <- []byte{1}
+	if _, _, err := c.ReadCommand(); err == nil {
+		t.Fatal("truncated command accepted")
+	}
+}

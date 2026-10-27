@@ -84,6 +84,7 @@ func newClient(conn Conn, key []byte, model string) *Client {
 		defer close(client.commandsDone)
 		for {
 			if _, _, err := conn.ReadCommand(); err != nil {
+				_ = conn.Close()
 				return
 			}
 		}

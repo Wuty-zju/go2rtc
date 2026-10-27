@@ -65,3 +65,25 @@ func TestClientClosePreservesTransportError(t *testing.T) {
 		t.Fatal("control reader leaked after transport close")
 	}
 }
+
+type failedControlConn struct{ *controlConn }
+
+func (c *failedControlConn) ReadCommand() (uint32, []byte, error) {
+	return 0, nil, errors.New("test: control read failed")
+}
+
+func TestControlFailureClosesSharedTransport(t *testing.T) {
+	conn := &failedControlConn{&controlConn{stopped: make(chan struct{})}}
+	client := newClient(conn, make([]byte, 32), "xiaomi.camera.082ac1")
+	defer client.Close()
+	select {
+	case <-conn.stopped:
+	case <-time.After(time.Second):
+		t.Fatal("control failure left the media transport running")
+	}
+	select {
+	case <-client.commandsDone:
+	case <-time.After(time.Second):
+		t.Fatal("failed control reader did not terminate")
+	}
+}
