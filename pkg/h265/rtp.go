@@ -15,9 +15,11 @@ func RTPDepay(codec *core.Codec, handler core.HandlerFunc) core.HandlerFunc {
 	buf := make([]byte, 0, 512*1024) // 512K
 	var nuStart int
 	var seqNum uint16
+	hasDON := core.Atoi(core.Between(codec.FmtpLine, "sprop-max-don-diff=", ";")) > 0
 
 	return func(packet *rtp.Packet) {
 		data := packet.Payload
+		marker := packet.Marker
 		if len(data) < 3 {
 			return
 		}
@@ -26,10 +28,10 @@ func RTPDepay(codec *core.Codec, handler core.HandlerFunc) core.HandlerFunc {
 		//log.Printf("[RTP] codec: %s, nalu: %2d, size: %6d, ts: %10d, pt: %2d, ssrc: %d, seq: %d, %v", track.Codec.Name, nuType, len(packet.Payload), packet.Timestamp, packet.PayloadType, packet.SSRC, packet.SequenceNumber, packet.Marker)
 
 		// Fix for RtspServer https://github.com/AlexxIT/go2rtc/issues/244
-		if packet.Marker && len(data) < h264.PSMaxSize {
+		if marker && len(data) < h264.PSMaxSize {
 			switch nuType {
 			case NALUTypeVPS, NALUTypeSPS, NALUTypePPS:
-				packet.Marker = false
+				marker = false
 			case NALUTypePrefixSEI, NALUTypeSuffixSEI:
 				return
 			}
@@ -45,7 +47,40 @@ func RTPDepay(codec *core.Codec, handler core.HandlerFunc) core.HandlerFunc {
 
 		seqNum = packet.SequenceNumber
 
-		if nuType == NALUTypeFU {
+		if nuType == 48 { // Aggregation Packet, RFC 7798 section 4.4.2
+			payload := data[2:]
+			if hasDON {
+				if len(payload) < 2 {
+					buf = buf[:0]
+					return
+				}
+				payload = payload[2:] // DONL of the first aggregation unit
+			}
+			var units []byte
+			for len(payload) >= 2 {
+				size := int(binary.BigEndian.Uint16(payload))
+				payload = payload[2:]
+				if size < 2 || size > len(payload) || payload[0]>>1&63 >= 48 {
+					buf = buf[:0]
+					return
+				}
+				units = binary.BigEndian.AppendUint32(units, uint32(size))
+				units = append(units, payload[:size]...)
+				payload = payload[size:]
+				if hasDON && len(payload) > 0 {
+					if len(payload) < 5 {
+						buf = buf[:0]
+						return
+					}
+					payload = payload[1:]
+				} // DOND
+			}
+			if len(payload) != 0 || len(units) == 0 {
+				buf = buf[:0]
+				return
+			}
+			buf = append(buf, units...)
+		} else if nuType == NALUTypeFU {
 			switch data[2] >> 6 {
 			case 0b10: // begin
 				nuType = data[2] & 0x3F
@@ -98,7 +133,7 @@ func RTPDepay(codec *core.Codec, handler core.HandlerFunc) core.HandlerFunc {
 		}
 
 		// collect all NAL Units for Access Unit
-		if !packet.Marker {
+		if !marker {
 			return
 		}
 
