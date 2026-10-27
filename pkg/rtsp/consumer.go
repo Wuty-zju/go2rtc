@@ -110,7 +110,7 @@ func (c *Conn) packetWriter(codec *core.Codec, channel, payloadType uint8) core.
 		}
 
 		if !video {
-			packet.Marker = true // better to have marker on all audio packets
+			clone.Marker = true // better to have marker on all audio packets
 		}
 
 		size := rtpHdr + len(packet.Payload)
