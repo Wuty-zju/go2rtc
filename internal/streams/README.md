@@ -139,3 +139,34 @@ streams:
   ffmpeg-video-10s:  ffmpeg:virtual?video&duration=10#video=h264
   ffmpeg-video-src2: ffmpeg:virtual?video=testsrc2&size=2K#video=h264
 ```
+
+## Select a source media
+
+A media query can select an exact producer media ID after the codec preference
+list: `video=h265@rear` selects the `rear` video media, while `video=@rear`
+accepts any codec from that media. IDs are case-sensitive and belong to the
+producer; they are not the consumer's RTSP control or WebRTC MID. Existing
+queries such as `video`, `video=copy` and `video=all` keep their behavior.
+
+This is useful when a source exposes multiple tracks using the same codec.
+For example, if `multi` exposes video media IDs `front` and `rear`, named
+read-only outputs can reuse the existing RTSP server:
+
+```yaml
+streams:
+  # multi: <one multi-track producer URL>
+  front: rtsp://127.0.0.1:8554/multi?video=copy@front&audio
+  rear: rtsp://127.0.0.1:8554/multi?video=copy@rear&audio
+```
+
+Use the configured RTSP port. Both local RTSP connections subscribe to the
+same `multi` stream. Closing one output leaves the other subscribed; closing
+the last consumer releases the original producer. The ID must be advertised
+by that producer and remain meaningful across reconnects. This does not infer
+physical lens labels or automatically share separate camera URLs.
+
+A missing ID or incompatible codec does not fall back to another video track.
+As with existing media queries, another requested media (for example audio)
+can still match independently. The selector applies to the entire comma-separated
+codec list, and `@` in a codec name is reserved for this syntax. An empty ID is
+not a valid selector. URL-encode IDs containing query delimiters.
