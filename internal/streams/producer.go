@@ -260,6 +260,7 @@ func (p *Producer) reconnect(workerID, retry int) {
 		}
 	}
 
+	p.senders = p.activeSenders()
 	for _, media := range medias {
 		if media.Direction == core.DirectionSendonly {
 			for _, sender := range p.senders {
@@ -279,6 +280,41 @@ func (p *Producer) reconnect(workerID, retry int) {
 	p.conn = conn
 
 	go p.worker(conn, workerID)
+}
+
+// activeSenders must be called with p.mu held. A source may have subscribers
+// belonging to other destinations, so its global child count is insufficient.
+func (p *Producer) activeSenders() []*core.Receiver {
+	var active []*core.Receiver
+	if conn, ok := p.conn.(interface{ GetSenderSources() []*core.Node }); ok {
+		sources := conn.GetSenderSources()
+		for _, receiver := range p.senders {
+			for _, source := range sources {
+				if source == &receiver.Node {
+					active = append(active, receiver)
+					break
+				}
+			}
+		}
+	} else {
+		for _, receiver := range p.senders {
+			if len(receiver.Senders()) > 0 {
+				active = append(active, receiver)
+			}
+		}
+	}
+	return active
+}
+
+func (p *Producer) hasConsumers() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for _, receiver := range p.receivers {
+		if len(receiver.Senders()) > 0 {
+			return true
+		}
+	}
+	return len(p.activeSenders()) > 0
 }
 
 func (p *Producer) stop() {
