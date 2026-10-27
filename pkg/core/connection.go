@@ -56,6 +56,21 @@ func (c *Connection) GetMedias() []*Media {
 	return c.Medias
 }
 
+// GetSenderSources reports the sources currently attached to this connection.
+// Like GetTrack and Stop, callers must serialize changes to Senders.
+func (c *Connection) GetSenderSources() []*Node {
+	var sources []*Node
+	for _, sender := range c.Senders {
+		sender.mu.Lock()
+		parent := sender.parent
+		sender.mu.Unlock()
+		if parent != nil {
+			sources = append(sources, parent)
+		}
+	}
+	return sources
+}
+
 func (c *Connection) GetTrack(media *Media, codec *Codec) (*Receiver, error) {
 	for _, receiver := range c.Receivers {
 		if receiver.Codec == codec {
