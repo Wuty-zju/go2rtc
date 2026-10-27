@@ -203,10 +203,27 @@ func (p *Producer) reconnect(workerID, retry int) {
 		return
 	}
 
-	for _, media := range conn.GetMedias() {
-		switch media.Direction {
-		case core.DirectionRecvonly:
+	mediaIDs := make(map[*core.Codec]string)
+	for _, media := range p.conn.GetMedias() {
+		for _, codec := range media.Codecs {
+			mediaIDs[codec] = media.ID
+		}
+	}
+	used := make([]bool, len(p.receivers))
+	medias := conn.GetMedias()
+	matched := make([]bool, len(medias))
+
+	// Reserve every stable ID before codec-only fallback can consume its receiver.
+	for pass := 0; pass < 2; pass++ {
+		for n, media := range medias {
+			if matched[n] || media.Direction != core.DirectionRecvonly {
+				continue
+			}
+		receivers:
 			for i, receiver := range p.receivers {
+				if used[i] || pass == 0 && (media.ID == "" || mediaIDs[receiver.Codec] != media.ID) {
+					continue
+				}
 				codec := media.MatchCodec(receiver.Codec)
 				if codec == nil {
 					continue
@@ -219,10 +236,15 @@ func (p *Producer) reconnect(workerID, retry int) {
 
 				receiver.Replace(track)
 				p.receivers[i] = track
-				break
+				used[i] = true
+				matched[n] = true
+				break receivers
 			}
+		}
+	}
 
-		case core.DirectionSendonly:
+	for _, media := range medias {
+		if media.Direction == core.DirectionSendonly {
 			for _, sender := range p.senders {
 				codec := media.MatchCodec(sender.Codec)
 				if codec == nil {
