@@ -138,7 +138,7 @@ func (c *Conn) packetWriter(codec *core.Codec, channel, payloadType uint8) core.
 
 		n += 4 + size
 
-		if !packet.Marker || !c.playOK {
+		if !clone.Marker || !c.playOK {
 			// collect continious video packets to buffer
 			// or wait OK for PLAY command for backchannel
 			//log.Printf("[rtsp] collecting buffer ok=%t", c.playOK)
