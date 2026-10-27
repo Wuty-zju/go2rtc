@@ -84,3 +84,35 @@ func TestReceiverConcurrentFanout(t *testing.T) {
 		t.Fatal("no packet reached a real sender")
 	}
 }
+
+func TestMoveNodeRetainsExistingTargetConsumers(t *testing.T) {
+	source, target := NewReceiver(nil, &Codec{}), NewReceiver(nil, &Codec{})
+	var sourcePackets, targetPackets int
+	(&Node{Input: func(*Packet) { sourcePackets++ }}).WithParent(&source.Node)
+	(&Node{Input: func(*Packet) { targetPackets++ }}).WithParent(&target.Node)
+	source.Replace(target)
+	target.Input(&Packet{})
+	if sourcePackets != 1 || targetPackets != 1 {
+		t.Fatalf("moving consumers discarded an existing target subscriber: %d/%d", sourcePackets, targetPackets)
+	}
+	source.Close()
+	target.Close()
+}
+
+func TestMoveNodeConcurrentConsumerClose(t *testing.T) {
+	for iteration := range 1000 {
+		source, target := NewReceiver(nil, &Codec{}), NewReceiver(nil, &Codec{})
+		sender := NewSender(nil, &Codec{})
+		sender.WithParent(source)
+		start := make(chan struct{})
+		var operations sync.WaitGroup
+		operations.Add(2)
+		go func() { defer operations.Done(); <-start; source.Replace(target) }()
+		go func() { defer operations.Done(); <-start; sender.Close() }()
+		close(start)
+		operations.Wait()
+		if len(source.Senders()) != 0 || len(target.Senders()) != 0 {
+			t.Fatalf("closed consumer reattached during reparent at iteration %d", iteration)
+		}
+	}
+}
