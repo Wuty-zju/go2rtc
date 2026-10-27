@@ -152,8 +152,10 @@ func (c *Conn) packetWriter(codec *core.Codec, channel, payloadType uint8) core.
 		switch codec.Name {
 		case core.CodecH264:
 			handlerFunc = h264.RTPPay(c.PacketSize, handlerFunc)
+			handlerFunc = waitForKeyframe(codec.Name, handlerFunc)
 		case core.CodecH265:
 			handlerFunc = h265.RTPPay(c.PacketSize, handlerFunc)
+			handlerFunc = waitForKeyframe(codec.Name, handlerFunc)
 		case core.CodecAAC:
 			handlerFunc = aac.RTPPay(handlerFunc)
 		case core.CodecJPEG:
@@ -195,4 +197,34 @@ func (c *Conn) writeInterleavedData(data []byte) error {
 	}
 
 	return nil
+}
+
+// Each raw-video subscriber needs its own decoding start point. Keep parameter
+// sets in parameter-only packets flowing while withholding dependent access units.
+func waitForKeyframe(codec string, handler core.HandlerFunc) core.HandlerFunc {
+	var ready bool
+	return func(packet *rtp.Packet) {
+		if !ready && packet.Version == h264.RTPPacketVersionAVC {
+			var vcl, keyframe bool
+			h264.EmitNalus(packet.Payload, true, func(nalu []byte) {
+				if len(nalu) == 0 {
+					return
+				}
+				if codec == core.CodecH264 {
+					kind := nalu[0] & 0x1F
+					vcl = vcl || kind >= 1 && kind <= 5
+					keyframe = keyframe || kind == h264.NALUTypeIFrame
+				} else {
+					kind := (nalu[0] >> 1) & 0x3F
+					vcl = vcl || kind <= 31
+					keyframe = keyframe || kind >= h265.NALUTypeIFrame && kind <= h265.NALUTypeIFrame3
+				}
+			})
+			if vcl && !keyframe {
+				return
+			}
+			ready = keyframe
+		}
+		handler(packet)
+	}
 }
