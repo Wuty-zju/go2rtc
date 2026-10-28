@@ -204,7 +204,7 @@ func (c *Conn) Accept() error {
 
 			res := &tcp.Response{Request: req}
 			err = c.WriteResponse(res)
-			c.playOK = true
+			c.playOK.Store(true)
 			return err
 
 		case MethodTeardown:

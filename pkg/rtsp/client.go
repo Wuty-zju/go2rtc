@@ -68,6 +68,7 @@ func (c *Conn) Dial() (err error) {
 	c.reader = bufio.NewReaderSize(conn, core.BufferSize)
 	c.session = ""
 	c.sequence = 0
+	c.playOK.Store(false)
 	c.state = StateConn
 
 	c.udpConn = nil
