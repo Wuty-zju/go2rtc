@@ -10,11 +10,13 @@ import (
 )
 
 var (
-	Version    string
-	Modules    []string
-	UserAgent  string
-	ConfigPath string
-	Info       = make(map[string]any)
+	Version string
+	// DistributionVersion is set only by the fork release packaging workflow.
+	DistributionVersion string
+	Modules             []string
+	UserAgent           string
+	ConfigPath          string
+	Info                = make(map[string]any)
 )
 
 const usage = `Usage of go2rtc:
@@ -40,6 +42,9 @@ func Init() {
 	flag.Parse()
 
 	revision, vcsTime := readRevisionTime()
+	if DistributionVersion != "" {
+		Version = DistributionVersion
+	}
 
 	if version {
 		fmt.Printf("go2rtc version %s (%s) %s/%s\n", Version, revision, runtime.GOOS, runtime.GOARCH)

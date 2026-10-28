@@ -1,0 +1,10 @@
+{
+  "versions": {
+    "master": "1.9.15.1",
+    "dev": "1.9.15.1_dev"
+  },
+  "upstream": {
+    "master": "7c05066c90ab6ad1fccb506d5f0408aa31ebe60f",
+    "dev": "38e30090f08bf898012b7070ebab4beb1ae2e2d8"
+  }
+}
