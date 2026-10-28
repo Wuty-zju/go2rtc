@@ -72,13 +72,39 @@ func NewClient(rawURL string) (*Client, error) {
 		return nil, err
 	}
 
-	return &Client{Conn: conn, key: key, model: model}, nil
+	return newClient(conn, key, model), nil
+}
+
+// After authentication no caller waits synchronously for control replies.
+// Consume notifications separately from media so their bounded transport queue
+// cannot fill and terminate an otherwise healthy media connection.
+func newClient(conn Conn, key []byte, model string) *Client {
+	client := &Client{Conn: conn, key: key, model: model, commandsDone: make(chan struct{})}
+	go func() {
+		defer close(client.commandsDone)
+		for {
+			if _, _, err := conn.ReadCommand(); err != nil {
+				_ = conn.Close()
+				return
+			}
+		}
+	}()
+	return client
+}
+
+func (c *Client) Close() error {
+	err := c.Conn.Close()
+	if c.commandsDone != nil {
+		<-c.commandsDone
+	}
+	return err
 }
 
 type Client struct {
 	Conn
-	key   []byte
-	model string
+	key          []byte
+	model        string
+	commandsDone chan struct{}
 }
 
 const (

@@ -157,7 +157,7 @@ func (c *Conn) worker() {
 			}
 
 			if err != nil {
-				c.err = fmt.Errorf("%s: %w", "cs2", err)
+				c.err = fmt.Errorf("cs2: channel %d: %w", ch, err)
 				return
 			}
 
@@ -196,6 +196,9 @@ func (c *Conn) ReadCommand() (cmd uint32, data []byte, err error) {
 	buf, ok := c.channels[0].Pop()
 	if !ok {
 		return 0, nil, c.Error()
+	}
+	if len(buf) < 4 {
+		return 0, nil, fmt.Errorf("cs2: command header too small")
 	}
 	cmd = binary.LittleEndian.Uint32(buf)
 	data = buf[4:]
@@ -265,7 +268,7 @@ func (c *Conn) WritePacket(hdr, payload []byte) error {
 	c.seqCh3++
 	binary.BigEndian.PutUint32(req[8:], n)
 	copy(req[offset:], hdr)
-	copy(req[offset+hdrSize:], hdr)
+	copy(req[offset+hdrSize:], payload)
 
 	_, err := c.Conn.Write(req)
 	return err
