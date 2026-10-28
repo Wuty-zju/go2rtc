@@ -27,9 +27,10 @@ type Producer struct {
 	url      string
 	template string
 
-	conn      core.Producer
-	receivers []*core.Receiver
-	senders   []*core.Receiver
+	conn           core.Producer
+	receivers      []*core.Receiver
+	receiverMedias []*core.Media
+	senders        []*core.Receiver
 
 	state    state
 	mu       sync.Mutex
@@ -102,6 +103,7 @@ func (p *Producer) GetTrack(media *core.Media, codec *core.Codec) (*core.Receive
 	}
 
 	p.receivers = append(p.receivers, track)
+	p.receiverMedias = append(p.receiverMedias, media)
 
 	if p.state == stateMedias {
 		p.state = stateTracks
@@ -203,26 +205,64 @@ func (p *Producer) reconnect(workerID, retry int) {
 		return
 	}
 
-	for _, media := range conn.GetMedias() {
-		switch media.Direction {
-		case core.DirectionRecvonly:
+	medias := conn.GetMedias()
+	used := make([]bool, len(p.receivers))
+	targets := make(map[*core.Receiver]bool)
+	type mediaID struct{ kind, id string }
+	stable := make(map[mediaID]bool)
+	for _, media := range medias {
+		if media.Direction == core.DirectionRecvonly && media.ID != "" {
+			stable[mediaID{media.Kind, media.ID}] = true
+		}
+	}
+
+	// Reserve stable identities even when obtaining one of their tracks fails.
+	for pass := 0; pass < 2; pass++ {
+		for _, media := range medias {
+			if media.Direction != core.DirectionRecvonly {
+				continue
+			}
 			for i, receiver := range p.receivers {
+				previous := p.receiverMedias[i]
+				if used[i] || previous.Kind != media.Kind {
+					continue
+				}
+				if pass == 0 {
+					if media.ID == "" || previous.ID != media.ID {
+						continue
+					}
+				} else if stable[mediaID{previous.Kind, previous.ID}] {
+					continue
+				}
 				codec := media.MatchCodec(receiver.Codec)
 				if codec == nil {
 					continue
 				}
-
 				track, err := conn.GetTrack(media, codec)
-				if err != nil {
+				if err != nil || targets[track] {
 					continue
 				}
-
 				receiver.Replace(track)
 				p.receivers[i] = track
-				break
+				p.receiverMedias[i] = media
+				used[i], targets[track] = true, true
 			}
+		}
+	}
 
-		case core.DirectionSendonly:
+	// Keep unavailable tracks attached to the stream, not the connection we stop.
+	// A later reconnect can restore them without losing their consumers or IDs.
+	for i, receiver := range p.receivers {
+		if !used[i] {
+			track := core.NewReceiver(p.receiverMedias[i], receiver.Codec)
+			receiver.Replace(track)
+			p.receivers[i] = track
+		}
+	}
+
+	p.senders = p.activeSenders()
+	for _, media := range medias {
+		if media.Direction == core.DirectionSendonly {
 			for _, sender := range p.senders {
 				codec := media.MatchCodec(sender.Codec)
 				if codec == nil {
@@ -242,6 +282,41 @@ func (p *Producer) reconnect(workerID, retry int) {
 	go p.worker(conn, workerID)
 }
 
+// activeSenders must be called with p.mu held. A source may have subscribers
+// belonging to other destinations, so its global child count is insufficient.
+func (p *Producer) activeSenders() []*core.Receiver {
+	var active []*core.Receiver
+	if conn, ok := p.conn.(interface{ GetSenderSources() []*core.Node }); ok {
+		sources := conn.GetSenderSources()
+		for _, receiver := range p.senders {
+			for _, source := range sources {
+				if source == &receiver.Node {
+					active = append(active, receiver)
+					break
+				}
+			}
+		}
+	} else {
+		for _, receiver := range p.senders {
+			if len(receiver.Senders()) > 0 {
+				active = append(active, receiver)
+			}
+		}
+	}
+	return active
+}
+
+func (p *Producer) hasConsumers() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for _, receiver := range p.receivers {
+		if len(receiver.Senders()) > 0 {
+			return true
+		}
+	}
+	return len(p.activeSenders()) > 0
+}
+
 func (p *Producer) stop() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -259,6 +334,9 @@ func (p *Producer) stop() {
 
 	log.Debug().Msgf("[streams] stop producer url=%s", p.url)
 
+	for _, receiver := range p.receivers {
+		receiver.Close()
+	}
 	if p.conn != nil {
 		_ = p.conn.Stop()
 		p.conn = nil
@@ -266,5 +344,6 @@ func (p *Producer) stop() {
 
 	p.state = stateNone
 	p.receivers = nil
+	p.receiverMedias = nil
 	p.senders = nil
 }

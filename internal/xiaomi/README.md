@@ -62,3 +62,24 @@ You can use a second channel for dual cameras: `channel=2`.
 streams:
   xiaomi1: xiaomi://***&channel=2
 ```
+
+### Experimental dual-lens tracks
+
+For the verified `xiaomi.camera.082ac1`, `channel=all` requests both video
+tracks through one MISS connection. Use `subtype=3` for high resolution.
+Media IDs `0` and `1` identify protocol channels, with shared microphone
+audio and one physical speaker; they do not label the physical lenses.
+Other models are not enabled without protocol evidence.
+
+```yaml
+streams:
+  camera: xiaomi://***&model=xiaomi.camera.082ac1&channel=all&subtype=3
+  second_lens: rtsp://127.0.0.1:8554/camera?video=copy@1&audio&backchannel=1#backchannel=1
+```
+
+The default RTSP query selects the first video; `video=all` selects both.
+Use the configured RTSP port. Backchannel support must be enabled on every
+proxy hop. Either outlet can supply the shared speaker; the first audio
+source wins until idle for one second. Competing input is dropped, not mixed.
+Preloading an outlet does not claim the speaker. Physical talkback still
+requires device/client validation. Do not add another direct device URL.

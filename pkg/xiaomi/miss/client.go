@@ -72,13 +72,39 @@ func NewClient(rawURL string) (*Client, error) {
 		return nil, err
 	}
 
-	return &Client{Conn: conn, key: key, model: model}, nil
+	return newClient(conn, key, model), nil
+}
+
+// After authentication no caller waits synchronously for control replies.
+// Consume notifications separately from media so their bounded transport queue
+// cannot fill and terminate an otherwise healthy media connection.
+func newClient(conn Conn, key []byte, model string) *Client {
+	client := &Client{Conn: conn, key: key, model: model, commandsDone: make(chan struct{})}
+	go func() {
+		defer close(client.commandsDone)
+		for {
+			if _, _, err := conn.ReadCommand(); err != nil {
+				_ = conn.Close()
+				return
+			}
+		}
+	}()
+	return client
+}
+
+func (c *Client) Close() error {
+	err := c.Conn.Close()
+	if c.commandsDone != nil {
+		<-c.commandsDone
+	}
+	return err
 }
 
 type Client struct {
 	Conn
-	key   []byte
-	model string
+	key          []byte
+	model        string
+	commandsDone chan struct{}
 }
 
 const (
@@ -145,6 +171,10 @@ const (
 )
 
 func (c *Client) StartMedia(channel, quality, audio string) error {
+	if channel == "all" && c.model != "xiaomi.camera.082ac1" {
+		return fmt.Errorf("miss: dual-lens streaming is not verified for %s", c.model)
+	}
+
 	switch c.model {
 	case ModelDafang, ModelXiaofang:
 		var q, a byte
@@ -187,6 +217,8 @@ func (c *Client) StartMedia(channel, quality, audio string) error {
 	switch channel {
 	case "", "0":
 		data = fmt.Appendf(data, `{"videoquality":%s,"enableaudio":%s}`, quality, audio)
+	case "all":
+		data = fmt.Appendf(data, `{"videoquality":%s,"videoquality2":%s,"enableaudio":%s}`, quality, quality, audio)
 	default:
 		data = fmt.Appendf(data, `{"videoquality":-1,"videoquality2":%s,"enableaudio":%s}`, quality, audio)
 	}
@@ -279,6 +311,12 @@ type Packet struct {
 	//TimestampS uint32
 	//Reserved uint32
 	Payload []byte
+}
+
+// videoChannel is observed on xiaomi.camera.082ac1 MISS video packets.
+// It is only used by the explicitly selected dual-lens mode.
+func (p *Packet) videoChannel() byte {
+	return byte(p.Flags >> 24 & 1)
 }
 
 func (p *Packet) SampleRate() uint32 {

@@ -1,6 +1,7 @@
 package rtsp
 
 import (
+	"encoding/binary"
 	"time"
 
 	"github.com/AlexxIT/go2rtc/pkg/aac"
@@ -93,10 +94,6 @@ func (c *Conn) packetWriter(codec *core.Codec, channel, payloadType uint8) core.
 	}
 
 	handlerFunc := func(packet *rtp.Packet) {
-		if c.state == StateNone {
-			return
-		}
-
 		clone := rtp.Packet{
 			Header: rtp.Header{
 				Version:        2,
@@ -110,7 +107,7 @@ func (c *Conn) packetWriter(codec *core.Codec, channel, payloadType uint8) core.
 		}
 
 		if !video {
-			packet.Marker = true // better to have marker on all audio packets
+			clone.Marker = true // better to have marker on all audio packets
 		}
 
 		size := rtpHdr + len(packet.Payload)
@@ -138,7 +135,7 @@ func (c *Conn) packetWriter(codec *core.Codec, channel, payloadType uint8) core.
 
 		n += 4 + size
 
-		if !packet.Marker || !c.playOK {
+		if !clone.Marker || !c.playOK.Load() {
 			// collect continious video packets to buffer
 			// or wait OK for PLAY command for backchannel
 			//log.Printf("[rtsp] collecting buffer ok=%t", c.playOK)
@@ -152,8 +149,10 @@ func (c *Conn) packetWriter(codec *core.Codec, channel, payloadType uint8) core.
 		switch codec.Name {
 		case core.CodecH264:
 			handlerFunc = h264.RTPPay(c.PacketSize, handlerFunc)
+			handlerFunc = waitForKeyframe(codec.Name, handlerFunc)
 		case core.CodecH265:
 			handlerFunc = h265.RTPPay(c.PacketSize, handlerFunc)
+			handlerFunc = waitForKeyframe(codec.Name, handlerFunc)
 		case core.CodecAAC:
 			handlerFunc = aac.RTPPay(handlerFunc)
 		case core.CodecJPEG:
@@ -165,14 +164,101 @@ func (c *Conn) packetWriter(codec *core.Codec, channel, payloadType uint8) core.
 		switch codec.Name {
 		case core.CodecH264:
 			handlerFunc = h264.RTPPay(c.PacketSize, handlerFunc)
+			handlerFunc = waitForKeyframe(codec.Name, handlerFunc)
 			handlerFunc = h264.RTPDepay(codec, handlerFunc)
 		case core.CodecH265:
 			handlerFunc = h265.RTPPay(c.PacketSize, handlerFunc)
+			handlerFunc = waitForKeyframe(codec.Name, handlerFunc)
 			handlerFunc = h265.RTPDepay(codec, handlerFunc)
 		}
+	} else if codec.Name == core.CodecH264 && core.Between(codec.FmtpLine, "packetization-mode=", ";") != "2" ||
+		codec.Name == core.CodecH265 && (core.Between(codec.FmtpLine, "sprop-max-don-diff=", ";") == "" || core.Between(codec.FmtpLine, "sprop-max-don-diff=", ";") == "0") {
+		// Keep RTP passthrough: only inspect the initial packets, without adding
+		// a depay/pay buffer or changing the source sequence numbers and clock.
+		handlerFunc = waitForRTPKeyframe(codec.Name, handlerFunc)
 	}
 
 	return handlerFunc
+}
+
+// The initial decoding point belongs to each subscriber, even when its source
+// is already streaming. Handle non-interleaved H264/H265 RTP (RFC 6184/7798).
+// A continuation of a fragmented keyframe cannot start a new decoder.
+// Packet loss after opening the gate remains the transport/decoder's concern.
+func waitForRTPKeyframe(codec string, handler core.HandlerFunc) core.HandlerFunc {
+	var ready bool
+	return func(packet *rtp.Packet) {
+		if !ready {
+			vcl, keyframe, valid := rtpVideoStart(codec, packet.Payload)
+			if !valid || vcl && !keyframe {
+				return
+			}
+			ready = keyframe
+		}
+		handler(packet)
+	}
+}
+
+func rtpVideoStart(codec string, data []byte) (vcl, keyframe, valid bool) {
+	var header, aggregate, fragment byte
+	var kind byte
+	if codec == core.CodecH264 {
+		header, aggregate, fragment = 1, 24, 28 // single NAL, STAP-A, FU-A
+		if len(data) < 2 {
+			return
+		}
+		kind = data[0] & 31
+	} else {
+		header, aggregate, fragment = 2, 48, 49 // single NAL, AP, FU
+		if len(data) < 3 {
+			return
+		}
+		kind = data[0] >> 1 & 63
+	}
+	classify := func(kind byte) (bool, bool, bool) {
+		if codec == core.CodecH264 {
+			return kind >= 1 && kind <= 5, kind == 5, kind >= 1 && kind <= 23
+		}
+		return kind <= 31, kind >= 16 && kind <= 21, kind < 48
+	}
+	switch kind {
+	case fragment:
+		if len(data) <= int(header)+1 {
+			return
+		}
+		fu := data[header]
+		if codec == core.CodecH264 {
+			kind = fu & 31
+		} else {
+			kind = fu & 63
+		}
+		vcl, keyframe, valid = classify(kind)
+		keyframe = keyframe && fu&0x80 != 0
+		return
+	case aggregate:
+		data = data[header:]
+		for len(data) >= 2 {
+			size := int(binary.BigEndian.Uint16(data))
+			data = data[2:]
+			if size <= int(header) || size > len(data) {
+				return false, false, false
+			}
+			if codec == core.CodecH264 {
+				kind = data[0] & 31
+			} else {
+				kind = data[0] >> 1 & 63
+			}
+			v, k, ok := classify(kind)
+			if !ok {
+				return false, false, false
+			}
+			vcl, keyframe, valid = vcl || v, keyframe || k, true
+			data = data[size:]
+		}
+		return vcl, keyframe, valid && len(data) == 0
+	default:
+		return classify(kind)
+	}
 }
 
 func (c *Conn) writeInterleavedData(data []byte) error {
@@ -195,4 +281,34 @@ func (c *Conn) writeInterleavedData(data []byte) error {
 	}
 
 	return nil
+}
+
+// Each raw-video subscriber needs its own decoding start point. Keep parameter
+// sets in parameter-only packets flowing while withholding dependent access units.
+func waitForKeyframe(codec string, handler core.HandlerFunc) core.HandlerFunc {
+	var ready bool
+	return func(packet *rtp.Packet) {
+		if !ready && packet.Version == h264.RTPPacketVersionAVC {
+			var vcl, keyframe bool
+			h264.EmitNalus(packet.Payload, true, func(nalu []byte) {
+				if len(nalu) == 0 {
+					return
+				}
+				if codec == core.CodecH264 {
+					kind := nalu[0] & 0x1F
+					vcl = vcl || kind >= 1 && kind <= 5
+					keyframe = keyframe || kind == h264.NALUTypeIFrame
+				} else {
+					kind := (nalu[0] >> 1) & 0x3F
+					vcl = vcl || kind <= 31
+					keyframe = keyframe || kind >= h265.NALUTypeIFrame && kind <= h265.NALUTypeIFrame3
+				}
+			})
+			if vcl && !keyframe {
+				return
+			}
+			ready = keyframe
+		}
+		handler(packet)
+	}
 }

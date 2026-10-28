@@ -139,3 +139,12 @@ streams:
   ffmpeg-video-10s:  ffmpeg:virtual?video&duration=10#video=h264
   ffmpeg-video-src2: ffmpeg:virtual?video=testsrc2&size=2K#video=h264
 ```
+
+## Select a source media
+
+For multi-track sources, append `@<source media ID>` to the codec query:
+`video=copy@rear` selects the `rear` video track, and `video=h264,h265@rear`
+selects that track with a codec preference. The source ID is case-sensitive;
+it is independent of the consumer's RTSP control or WebRTC MID. An unknown
+ID does not fall back to another lens. Existing `video`, `copy` and `all`
+queries keep their behavior.

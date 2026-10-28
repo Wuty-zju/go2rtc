@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/AlexxIT/go2rtc/pkg/core"
@@ -39,7 +40,7 @@ type Conn struct {
 	conn      net.Conn
 	keepalive int
 	mode      core.Mode
-	playOK    bool
+	playOK    atomic.Bool
 	playErr   error
 	reader    *bufio.Reader
 	sequence  int
@@ -210,7 +211,7 @@ func (c *Conn) handleTCPData() error {
 			}
 			c.Fire(res)
 			// for playing backchannel only after OK response on play
-			c.playOK = true
+			c.playOK.Store(true)
 			return nil
 
 		case "OPTI", "TEAR", "DESC", "SETU", "PLAY", "PAUS", "RECO", "ANNO", "GET_", "SET_":
