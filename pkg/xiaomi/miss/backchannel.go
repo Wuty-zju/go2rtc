@@ -101,7 +101,6 @@ func (p *Producer) AddTrack(media *core.Media, _ *core.Codec, track *core.Receiv
 					_ = p.client.Conn.Close()
 					return
 				}
-				time.Sleep(time.Second) // Same device startup delay as single-lens mode.
 				p.speaker = sender
 			}
 			p.speakerTime = time.Now()
