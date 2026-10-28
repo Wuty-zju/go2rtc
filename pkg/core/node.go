@@ -41,17 +41,25 @@ func (n *Node) WithParent(parent *Node) *Node {
 
 func (n *Node) AppendChild(child *Node) {
 	n.mu.Lock()
-	n.childs = append(n.childs, child)
-	n.mu.Unlock()
-
+	// Readers keep a snapshot while invoking callbacks without the graph lock.
+	childs := make([]*Node, len(n.childs)+1)
+	copy(childs, n.childs)
+	childs[len(n.childs)] = child
+	child.mu.Lock()
 	child.parent = n
+	child.mu.Unlock()
+	n.childs = childs
+	n.mu.Unlock()
 }
 
 func (n *Node) RemoveChild(child *Node) {
 	n.mu.Lock()
 	for i, ch := range n.childs {
 		if ch == child {
-			n.childs = append(n.childs[:i], n.childs[i+1:]...)
+			childs := make([]*Node, len(n.childs)-1)
+			copy(childs, n.childs[:i])
+			copy(childs[i:], n.childs[i+1:])
+			n.childs = childs
 			break
 		}
 	}
@@ -59,30 +67,46 @@ func (n *Node) RemoveChild(child *Node) {
 }
 
 func (n *Node) Close() {
-	if parent := n.parent; parent != nil {
+	n.mu.Lock()
+	parent, childs := n.parent, n.childs
+	n.parent = nil
+	n.mu.Unlock()
+	if parent != nil {
 		parent.RemoveChild(n)
-
-		if len(parent.childs) == 0 {
+		parent.mu.Lock()
+		orphan := len(parent.childs) == 0 && parent.parent != nil
+		parent.mu.Unlock()
+		if orphan {
 			parent.Close()
 		}
 	} else {
-		for _, childs := range n.childs {
-			childs.Close()
+		for _, child := range childs {
+			child.Close()
 		}
 	}
 }
 
 func MoveNode(dst, src *Node) {
+	if dst == src {
+		return
+	}
 	src.mu.Lock()
 	childs := src.childs
 	src.childs = nil
 	src.mu.Unlock()
 
 	dst.mu.Lock()
-	dst.childs = childs
-	dst.mu.Unlock()
-
+	// Preserve existing subscribers and skip children closed during the move.
+	merged := make([]*Node, len(dst.childs), len(dst.childs)+len(childs))
+	copy(merged, dst.childs)
 	for _, child := range childs {
-		child.parent = dst
+		child.mu.Lock()
+		if child.parent == src {
+			child.parent = dst
+			merged = append(merged, child)
+		}
+		child.mu.Unlock()
 	}
+	dst.childs = merged
+	dst.mu.Unlock()
 }

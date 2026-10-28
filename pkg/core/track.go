@@ -27,9 +27,12 @@ func NewReceiver(media *Media, codec *Codec) *Receiver {
 		Media: media,
 	}
 	r.Input = func(packet *Packet) {
+		r.mu.Lock()
 		r.Bytes += len(packet.Payload)
 		r.Packets++
-		for _, child := range r.childs {
+		childs := r.childs
+		r.mu.Unlock()
+		for _, child := range childs {
 			child.Input(packet)
 		}
 	}
@@ -43,6 +46,8 @@ func (r *Receiver) WriteRTP(packet *rtp.Packet) {
 
 // Deprecated: should be removed
 func (r *Receiver) Senders() []*Sender {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	if len(r.childs) > 0 {
 		return []*Sender{{}}
 	} else {
@@ -177,6 +182,8 @@ func (s *Sender) Close() {
 }
 
 func (r *Receiver) MarshalJSON() ([]byte, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	v := struct {
 		ID      uint32   `json:"id"`
 		Codec   *Codec   `json:"codec"`
@@ -196,6 +203,8 @@ func (r *Receiver) MarshalJSON() ([]byte, error) {
 }
 
 func (s *Sender) MarshalJSON() ([]byte, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	v := struct {
 		ID      uint32 `json:"id"`
 		Codec   *Codec `json:"codec"`
