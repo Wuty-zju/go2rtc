@@ -77,8 +77,8 @@ func TestSharedSpeaker(t *testing.T) {
 	send(0, 1, 320)
 	time.Sleep(1100 * time.Millisecond)
 	send(1, 3, 320)
-	if len(wire.packets) != 3 {
-		t.Fatal("idle speaker was not reusable from either input")
+	if len(wire.packets) != 3 || wire.starts != 3 {
+		t.Fatal("idle speaker was not restarted for either input")
 	}
 	raw, err = crypto.Decode(wire.packets[2], make([]byte, 32))
 	if err != nil || !bytes.Equal(raw, bytes.Repeat([]byte{3}, 320)) {
