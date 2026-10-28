@@ -17,6 +17,9 @@ type Media struct {
 	Codecs    []*Codec `json:"codecs,omitempty"`
 
 	ID string `json:"id,omitempty"` // MID for WebRTC, Control for RTSP
+
+	// SourceID selects a producer media without changing the consumer transport ID.
+	SourceID string `json:"-"`
 }
 
 func (m *Media) String() string {
@@ -47,6 +50,10 @@ func (m *Media) Clone() *Media {
 }
 
 func (m *Media) MatchMedia(remote *Media) (codec, remoteCodec *Codec) {
+	if remote.SourceID != "" && m.ID != remote.SourceID {
+		return nil, nil
+	}
+
 	// check same kind and opposite dirrection
 	if m.Kind != remote.Kind ||
 		m.Direction == DirectionSendonly && remote.Direction != DirectionRecvonly ||
@@ -183,6 +190,11 @@ func ParseQuery(query map[string][]string) (medias []*Media) {
 		case KindVideo, KindAudio:
 			for _, value := range values {
 				media := &Media{Kind: key, Direction: DirectionSendonly}
+
+				// A selector applies to the entire codec preference list.
+				if codecs, id, ok := strings.Cut(value, "@"); ok && id != "" {
+					value, media.SourceID = codecs, id
+				}
 
 				for _, name := range strings.Split(value, ",") {
 					name = strings.ToUpper(name)
