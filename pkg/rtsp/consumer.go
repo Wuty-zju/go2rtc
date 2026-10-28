@@ -93,10 +93,6 @@ func (c *Conn) packetWriter(codec *core.Codec, channel, payloadType uint8) core.
 	}
 
 	handlerFunc := func(packet *rtp.Packet) {
-		if c.state == StateNone {
-			return
-		}
-
 		clone := rtp.Packet{
 			Header: rtp.Header{
 				Version:        2,
@@ -138,7 +134,7 @@ func (c *Conn) packetWriter(codec *core.Codec, channel, payloadType uint8) core.
 
 		n += 4 + size
 
-		if !packet.Marker || !c.playOK {
+		if !packet.Marker || !c.playOK.Load() {
 			// collect continious video packets to buffer
 			// or wait OK for PLAY command for backchannel
 			//log.Printf("[rtsp] collecting buffer ok=%t", c.playOK)
