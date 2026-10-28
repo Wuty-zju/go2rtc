@@ -1,0 +1,26 @@
+name: Container maintenance
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        type: choice
+        options: [audit, cleanup]
+        default: audit
+permissions:
+  contents: read
+  packages: write
+jobs:
+  packages:
+    if: github.repository == 'Wuty-zju/go2rtc'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: {persist-credentials: false}
+      - name: Audit or remove obsolete package versions
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MODE: ${{ inputs.mode }}
+        run: python3 .github/scripts/packages.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: {name: package-audit, path: package-audit/*.json}

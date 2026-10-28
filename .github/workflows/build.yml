@@ -1,254 +1,340 @@
 name: Build and Push
 
 on:
-  workflow_dispatch:
   push:
-    branches:
-      - 'beta'
-      - 'dev'
-    tags:
-      - 'v*'
+    branches: [master, dev]
+    tags: ['v*']
+  pull_request:
+    branches: [master, dev]
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish this master/dev rolling container after validation
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+env:
+  PYTHONDONTWRITEBYTECODE: '1'
+
+concurrency:
+  group: fork-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
-  build-binaries:
-    name: Build binaries
+  plan:
+    if: github.repository == 'Wuty-zju/go2rtc'
     runs-on: ubuntu-latest
-    env: { CGO_ENABLED: 0 }
+    outputs:
+      sources: ${{ steps.plan.outputs.sources }}
+      sha: ${{ steps.plan.outputs.sha }}
+      channel: ${{ steps.plan.outputs.channel }}
+      tag: ${{ steps.plan.outputs.tag }}
+      version: ${{ steps.plan.outputs.version }}
+      baseline_name: ${{ steps.plan.outputs.baseline_name }}
+      baseline_sha: ${{ steps.plan.outputs.baseline_sha }}
+      publish: ${{ steps.plan.outputs.publish }}
+      release: ${{ steps.plan.outputs.release }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with: {fetch-depth: 0, persist-credentials: false}
+      - id: plan
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+          BASE_REF: ${{ github.base_ref }}
+          PUBLISH_INPUT: ${{ inputs.publish }}
+        run: python3 .github/scripts/fork-build.py plan
 
-      - name: Setup Go
-        uses: actions/setup-go@v5
-        with: { go-version: '1.27' }
-
-      - name: Build go2rtc_win64
-        env: { GOOS: windows, GOARCH: amd64 }
-        run: go build -ldflags "-s -w" -trimpath
-      - name: Upload go2rtc_win64
-        uses: actions/upload-artifact@v4
-        with: { name: go2rtc_win64, path: go2rtc.exe }
-
-      - name: Build go2rtc_win32
-        env: { GOOS: windows, GOARCH: 386 }
-        run: go build -ldflags "-s -w" -trimpath
-      - name: Upload go2rtc_win32
-        uses: actions/upload-artifact@v4
-        with: { name: go2rtc_win32, path: go2rtc.exe }
-
-      - name: Build go2rtc_win_arm64
-        env: { GOOS: windows, GOARCH: arm64 }
-        run: go build -ldflags "-s -w" -trimpath
-      - name: Upload go2rtc_win_arm64
-        uses: actions/upload-artifact@v4
-        with: { name: go2rtc_win_arm64, path: go2rtc.exe }
-
-      - name: Build go2rtc_linux_amd64
-        env: { GOOS: linux, GOARCH: amd64 }
-        run: go build -ldflags "-s -w" -trimpath
-      - name: Upload go2rtc_linux_amd64
-        uses: actions/upload-artifact@v4
-        with: { name: go2rtc_linux_amd64, path: go2rtc }
-
-      - name: Build go2rtc_linux_i386
-        env: { GOOS: linux, GOARCH: 386 }
-        run: go build -ldflags "-s -w" -trimpath
-      - name: Upload go2rtc_linux_i386
-        uses: actions/upload-artifact@v4
-        with: { name: go2rtc_linux_i386, path: go2rtc }
-
-      - name: Build go2rtc_linux_arm64
-        env: { GOOS: linux, GOARCH: arm64 }
-        run: go build -ldflags "-s -w" -trimpath
-      - name: Upload go2rtc_linux_arm64
-        uses: actions/upload-artifact@v4
-        with: { name: go2rtc_linux_arm64, path: go2rtc }
-
-      - name: Build go2rtc_linux_arm
-        env: { GOOS: linux, GOARCH: arm, GOARM: 7 }
-        run: go build -ldflags "-s -w" -trimpath
-      - name: Upload go2rtc_linux_arm
-        uses: actions/upload-artifact@v4
-        with: { name: go2rtc_linux_arm, path: go2rtc }
-
-      - name: Build go2rtc_linux_armv6
-        env: { GOOS: linux, GOARCH: arm, GOARM: 6 }
-        run: go build -ldflags "-s -w" -trimpath
-      - name: Upload go2rtc_linux_armv6
-        uses: actions/upload-artifact@v4
-        with: { name: go2rtc_linux_armv6, path: go2rtc }
-
-      - name: Build go2rtc_linux_mipsel
-        env: { GOOS: linux, GOARCH: mipsle }
-        run: go build -ldflags "-s -w" -trimpath
-      - name: Upload go2rtc_linux_mipsel
-        uses: actions/upload-artifact@v4
-        with: { name: go2rtc_linux_mipsel, path: go2rtc }
-
-      - name: Build go2rtc_mac_amd64
-        env: { GOOS: darwin, GOARCH: amd64 }
-        run: go build -ldflags "-s -w" -trimpath
-      - name: Upload go2rtc_mac_amd64
-        uses: actions/upload-artifact@v4
-        with: { name: go2rtc_mac_amd64, path: go2rtc }
-
-      - name: Build go2rtc_mac_arm64
-        env: { GOOS: darwin, GOARCH: arm64 }
-        run: go build -ldflags "-s -w" -trimpath
-      - name: Upload go2rtc_mac_arm64
-        uses: actions/upload-artifact@v4
-        with: { name: go2rtc_mac_arm64, path: go2rtc }
-
-      - name: Build go2rtc_freebsd_amd64
-        env: { GOOS: freebsd, GOARCH: amd64 }
-        run: go build -ldflags "-s -w" -trimpath
-      - name: Upload go2rtc_freebsd_amd64
-        uses: actions/upload-artifact@v4
-        with: { name: go2rtc_freebsd_amd64, path: go2rtc }
-
-      - name: Build go2rtc_freebsd_arm64
-        env: { GOOS: freebsd, GOARCH: arm64 }
-        run: go build -ldflags "-s -w" -trimpath
-      - name: Upload go2rtc_freebsd_arm64
-        uses: actions/upload-artifact@v4
-        with: { name: go2rtc_freebsd_arm64, path: go2rtc }
-
-  docker-master:
-    name: Build docker master
+  validate:
+    name: Validate ${{ needs.plan.outputs.channel }}
+    needs: plan
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Docker meta
-        id: meta
-        uses: docker/metadata-action@v5
+      - uses: actions/checkout@v4
+        with: {ref: '${{ needs.plan.outputs.sha }}', fetch-depth: 0, persist-credentials: false}
+      - uses: actions/setup-go@v5
+        with: {go-version: '1.27'}
+      - name: Validate branch and tag publication policy
+        run: python3 -B -m unittest discover -s .github/scripts -p 'test_*.py' -v
+      - name: Build and relevant race checks
+        shell: bash
+        run: |
+          go build -mod=readonly -trimpath -o "$RUNNER_TEMP/go2rtc" .
+          "$RUNNER_TEMP/go2rtc" -version
+          go test -race ./pkg/xiaomi/... ./internal/xiaomi
+          go test -race ./internal/streams -run '^Test(SourceMediaSelection|Reconnect|ReleasedBackchannel)' -count=1
+          go test -race ./pkg/rtsp ./internal/rtsp ./pkg/h264 ./pkg/h265 ./pkg/magic -timeout 120s
+          mapfile -t files < <(find pkg/core -maxdepth 1 -name '*.go' ! -name core_test.go | sort)
+          go test -race "${files[@]}" -count=1
+          go vet -copylocks=false ./pkg/xiaomi/... ./internal/xiaomi ./internal/streams ./pkg/rtsp ./pkg/magic
+          git diff --exit-code
+      - name: Full core and streams race on the dev baseline
+        if: needs.plan.outputs.baseline_name == 'dev'
+        run: go test -race ./pkg/core ./internal/streams
+      - name: Compare test-inclusive vet failures with the exact upstream baseline
+        env:
+          BASELINE_SHA: ${{ needs.plan.outputs.baseline_sha }}
+        shell: bash
+        run: |
+          packages=(./pkg/xiaomi/... ./internal/xiaomi ./internal/streams ./pkg/rtsp ./pkg/magic)
+          if ! go vet "${packages[@]}" > "$RUNNER_TEMP/actual-vet.txt" 2>&1; then
+            git worktree add --detach "$RUNNER_TEMP/vet-baseline" "$BASELINE_SHA"
+            baseline_failed=false
+            (cd "$RUNNER_TEMP/vet-baseline" && go vet "${packages[@]}") > "$RUNNER_TEMP/baseline-vet.txt" 2>&1 || baseline_failed=true
+            [[ "$baseline_failed" == true ]]
+            diff -u "$RUNNER_TEMP/baseline-vet.txt" "$RUNNER_TEMP/actual-vet.txt"
+            cat "$RUNNER_TEMP/actual-vet.txt"
+            echo '::warning::Full vet has identical upstream baseline diagnostics; no additional vet diagnostics were accepted.'
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
         with:
-          images: ghcr.io/${{ github.repository }}
-          tags: |
-            type=ref,event=branch
-            type=semver,pattern={{version}},enable=false
-            type=match,pattern=v(.*),group=1
+          name: vet-${{ needs.plan.outputs.channel }}
+          path: |
+            ${{ runner.temp }}/actual-vet.txt
+            ${{ runner.temp }}/baseline-vet.txt
+      - name: Complete core and streams baseline (visible diagnostic)
+        continue-on-error: true
+        run: go test ./pkg/core ./internal/streams
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
+  binaries:
+    name: Binaries ${{ needs.plan.outputs.channel }}
+    timeout-minutes: 40
+    needs: [plan, validate]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: {ref: '${{ needs.plan.outputs.sha }}', fetch-depth: 0, persist-credentials: false}
+      - uses: actions/setup-go@v5
+        with: {go-version: '1.27'}
+      - name: Build and verify thirteen upstream binary targets
+        env:
+          SOURCE_SHA: ${{ needs.plan.outputs.sha }}
+          VERSION: ${{ needs.plan.outputs.version }}
+        run: python3 .github/scripts/fork-build.py binaries
+      - uses: actions/upload-artifact@v4
+        with:
+          name: binaries-${{ needs.plan.outputs.channel }}
+          path: ${{ runner.temp }}/dist/*
+          if-no-files-found: error
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Login to GitHub Container Registry
-        if: github.event_name != 'pull_request'
-        uses: docker/login-action@v3
+  containers:
+    name: Container ${{ needs.plan.outputs.channel }} ${{ matrix.target.id }}
+    timeout-minutes: 40
+    needs: [plan, validate]
+    permissions: {contents: read, packages: write}
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - {id: amd64, platform: linux/amd64, suffix: '', file: docker/Dockerfile}
+          - {id: i386, platform: linux/386, suffix: '', file: docker/Dockerfile}
+          - {id: armv6, platform: linux/arm/v6, suffix: '', file: docker/Dockerfile}
+          - {id: armv7, platform: linux/arm/v7, suffix: '', file: docker/Dockerfile}
+          - {id: arm64, platform: linux/arm64/v8, suffix: '', file: docker/Dockerfile}
+          - {id: hardware-amd64, platform: linux/amd64, suffix: '-hardware', file: docker/hardware.Dockerfile}
+          - {id: rockchip-arm64, platform: linux/arm64, suffix: '-rockchip', file: docker/rockchip.Dockerfile}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: {ref: '${{ needs.plan.outputs.sha }}', fetch-depth: 0, persist-credentials: false}
+      - uses: actions/setup-go@v5
+        with: {go-version: '1.27', cache: false}
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - id: recipe
+        env:
+          DOCKERFILE: ${{ matrix.target.file }}
+          VERSION: ${{ needs.plan.outputs.version }}
+        run: python3 .github/scripts/fork-build.py recipe
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ steps.recipe.outputs.file }}
+          platforms: ${{ matrix.target.platform }}
+          load: true
+          tags: go2rtc-ci:test
+          labels: |
+            org.opencontainers.image.source=https://github.com/Wuty-zju/go2rtc
+            org.opencontainers.image.revision=${{ needs.plan.outputs.sha }}
+            org.opencontainers.image.version=${{ needs.plan.outputs.tag }}
+          cache-from: type=gha,scope=${{ needs.plan.outputs.channel }}-${{ matrix.target.id }}
+          cache-to: type=gha,mode=max,scope=${{ needs.plan.outputs.channel }}-${{ matrix.target.id }}
+      - name: Verify runtime identity before any push
+        env:
+          SOURCE_SHA: ${{ needs.plan.outputs.sha }}
+          VERSION: ${{ needs.plan.outputs.version }}
+          PLATFORM: ${{ matrix.target.platform }}
+        shell: bash
+        run: |
+          output=$(timeout 45s docker run --rm --network none --platform "$PLATFORM" --entrypoint /usr/local/bin/go2rtc go2rtc-ci:test -version)
+          printf '%s\n' "$output" | tee "$RUNNER_TEMP/version.txt"
+          [[ "$output" == *"${SOURCE_SHA:0:7}"* && "$output" != *'.dirty'* ]]
+          if [[ -n "$VERSION" ]]; then [[ "$output" == *"version $VERSION ("* ]]; fi
+          container=$(docker create go2rtc-ci:test)
+          docker cp "$container:/usr/local/bin/go2rtc" "$RUNNER_TEMP/image-go2rtc"
+          docker rm "$container"
+          go version -m "$RUNNER_TEMP/image-go2rtc" > "$RUNNER_TEMP/buildinfo.txt"
+          grep -F "vcs.revision=$SOURCE_SHA" "$RUNNER_TEMP/buildinfo.txt"
+          grep -F 'vcs.modified=false' "$RUNNER_TEMP/buildinfo.txt"
+          grep -F 'CGO_ENABLED=0' "$RUNNER_TEMP/buildinfo.txt"
+          case "$PLATFORM" in
+            linux/arm/v6) grep -F 'GOARCH=arm' "$RUNNER_TEMP/buildinfo.txt"; grep -F 'GOARM=6' "$RUNNER_TEMP/buildinfo.txt" ;;
+            linux/arm/v7) grep -F 'GOARCH=arm' "$RUNNER_TEMP/buildinfo.txt"; grep -F 'GOARM=7' "$RUNNER_TEMP/buildinfo.txt" ;;
+            linux/arm64*) grep -F 'GOARCH=arm64' "$RUNNER_TEMP/buildinfo.txt" ;;
+            linux/386) grep -F 'GOARCH=386' "$RUNNER_TEMP/buildinfo.txt" ;;
+            linux/amd64) grep -F 'GOARCH=amd64' "$RUNNER_TEMP/buildinfo.txt" ;;
+            *) exit 1 ;;
+          esac
+      - name: Smoke default entrypoint and API with an empty isolated config
+        timeout-minutes: 3
+        env:
+          SOURCE_SHA: ${{ needs.plan.outputs.sha }}
+          VERSION: ${{ needs.plan.outputs.version }}
+          PLATFORM: ${{ matrix.target.platform }}
+        shell: bash
+        run: |
+          printf 'api:\n  listen: "127.0.0.1:1984"\nrtsp:\n  listen: ""\nwebrtc:\n  listen: ""\n' > "$RUNNER_TEMP/smoke.yaml"
+          container=$(docker run -d --network none --platform "$PLATFORM" -v "$RUNNER_TEMP/smoke.yaml:/config/go2rtc.yaml:ro" go2rtc-ci:test)
+          trap 'docker logs "$container"; docker rm -f "$container"' EXIT
+          ready=false
+          for attempt in {1..10}; do
+            if timeout 10s docker exec "$container" python3 -c 'import json,sys,urllib.request; x=json.load(urllib.request.urlopen("http://127.0.0.1:1984/api",timeout=2)); assert x["revision"]==sys.argv[1][:7]; assert not sys.argv[2] or x["version"]==sys.argv[2]; print(json.dumps(x))' "$SOURCE_SHA" "$VERSION" > "$RUNNER_TEMP/api.json"; then
+              ready=true; break
+            fi
+            sleep 1
+          done
+          [[ "$ready" == true ]]
+          cat "$RUNNER_TEMP/api.json"
+          docker stop -t 5 "$container"
+          docker rm "$container"
+          trap - EXIT
+      - uses: docker/login-action@v3
+        if: needs.plan.outputs.publish == 'true'
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Build and push
-        uses: docker/build-push-action@v5
+      - name: Push verified build by digest without public platform tags
+        if: needs.plan.outputs.publish == 'true'
+        id: pushed
+        uses: docker/build-push-action@v6
         with:
           context: .
-          file: docker/Dockerfile
-          platforms: |
-            linux/amd64
-            linux/386
-            linux/arm/v6
-            linux/arm/v7
-            linux/arm64/v8
-          push: ${{ github.event_name != 'pull_request' }}
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          file: ${{ steps.recipe.outputs.file }}
+          platforms: ${{ matrix.target.platform }}
+          provenance: false
+          outputs: type=image,name=ghcr.io/wuty-zju/go2rtc,push-by-digest=true,name-canonical=true,push=true
+          labels: |
+            org.opencontainers.image.source=https://github.com/Wuty-zju/go2rtc
+            org.opencontainers.image.revision=${{ needs.plan.outputs.sha }}
+            org.opencontainers.image.version=${{ needs.plan.outputs.tag }}
+      - name: Verify published digest and record identity
+        if: needs.plan.outputs.publish == 'true'
+        env:
+          SOURCE_SHA: ${{ needs.plan.outputs.sha }}
+          CHANNEL: ${{ needs.plan.outputs.channel }}
+          TAG: ${{ needs.plan.outputs.tag }}
+          TARGET: ${{ matrix.target.id }}
+          SUFFIX: ${{ matrix.target.suffix }}
+          PLATFORM: ${{ matrix.target.platform }}
+          DIGEST: ${{ steps.pushed.outputs.digest }}
+        run: |
+          image="ghcr.io/wuty-zju/go2rtc@$DIGEST"
+          docker pull --platform "$PLATFORM" "$image"
+          docker run --rm --network none --platform "$PLATFORM" --entrypoint /usr/local/bin/go2rtc "$image" -version > "$RUNNER_TEMP/published-version.txt"
+          cmp "$RUNNER_TEMP/version.txt" "$RUNNER_TEMP/published-version.txt"
+          container=$(docker create --platform "$PLATFORM" "$image")
+          docker cp "$container:/usr/local/bin/go2rtc" "$RUNNER_TEMP/published-go2rtc"
+          docker rm "$container"
+          cmp "$RUNNER_TEMP/image-go2rtc" "$RUNNER_TEMP/published-go2rtc"
+          docker buildx imagetools inspect "$image" --raw > "$RUNNER_TEMP/platform-manifest.json"
+          python3 - <<'PYCODE'
+          import json,os,pathlib
+          root=pathlib.Path(os.environ['RUNNER_TEMP'])
+          record={k.lower():os.environ[k] for k in ['SOURCE_SHA','CHANNEL','TAG','TARGET','SUFFIX','PLATFORM']}
+          record.update(digest=os.environ['DIGEST'],version_output=(root/'version.txt').read_text().strip())
+          (root/'identity.json').write_text(json.dumps(record,indent=2)+'\n')
+          PYCODE
+      - uses: actions/upload-artifact@v4
+        with:
+          name: platform-${{ needs.plan.outputs.channel }}-${{ matrix.target.id }}
+          path: |
+            ${{ runner.temp }}/version.txt
+            ${{ runner.temp }}/identity.json
+            ${{ runner.temp }}/platform-manifest.json
+            ${{ runner.temp }}/buildinfo.txt
+            ${{ runner.temp }}/api.json
 
-  docker-hardware:
-    name: Build docker hardware
+  manifests:
+    if: needs.plan.outputs.publish == 'true'
+    needs: [plan, binaries, containers]
+    permissions: {contents: read, packages: write}
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Docker meta
-        id: meta-hw
-        uses: docker/metadata-action@v5
-        with:
-          images: ghcr.io/${{ github.repository }}
-          flavor: |
-            suffix=-hardware,onlatest=true
-            latest=auto
-          tags: |
-            type=ref,event=branch
-            type=semver,pattern={{version}},enable=false
-            type=match,pattern=v(.*),group=1
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Login to GitHub Container Registry
-        if: github.event_name != 'pull_request'
-        uses: docker/login-action@v3
+      - uses: actions/download-artifact@v4
+        with: {pattern: platform-*, path: platforms}
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Publish branch or version manifests only after all platforms pass
+        env:
+          SOURCES_JSON: ${{ needs.plan.outputs.sources }}
+        run: |
+          python3 - <<'PY'
+          import json,os,pathlib,subprocess
+          records=[json.loads(p.read_text()) for p in pathlib.Path('platforms').glob('*/identity.json')]
+          sources=json.loads(os.environ['SOURCES_JSON'])
+          assert len(records)==7*len(sources),'Missing platform identities'
+          assert {r['source_sha'] for r in records}=={s['sha'] for s in sources}
+          groups={}
+          for record in records: groups.setdefault((record['tag'],record['suffix'],record['source_sha']),[]).append(record)
+          manifests=[]
+          for (tag,suffix,sha),items in groups.items():
+              expected=5 if suffix=='' else 1
+              assert len(items)==expected,(tag,suffix,len(items))
+              image='ghcr.io/wuty-zju/go2rtc'
+              tags=[image+':'+tag+suffix]
+              if tag[0].isdigit() and not tag.endswith('_dev'): tags.append(image+':latest'+suffix)
+              subprocess.run(['docker','buildx','imagetools','create',*[a for t in tags for a in ['--tag',t]],*[image+'@'+r['digest'] for r in items]],check=True)
+              descriptor=json.loads(subprocess.check_output(['docker','buildx','imagetools','inspect',tags[0],'--format','{{json .Manifest}}']))
+              digest=descriptor['digest']
+              manifests.append(dict(tags=tags,digest=digest,source_sha=sha,platforms=items))
+          pathlib.Path('containers.json').write_text(json.dumps(manifests,indent=2)+'\n')
+          PY
+      - uses: actions/upload-artifact@v4
+        with: {name: container-manifests, path: containers.json}
 
-      - name: Build and push
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          file: docker/hardware.Dockerfile
-          platforms: linux/amd64
-          push: ${{ github.event_name != 'pull_request' }}
-          tags: ${{ steps.meta-hw.outputs.tags }}
-          labels: ${{ steps.meta-hw.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-  docker-rockchip:
-    name: Build docker rockchip
+  draft-release:
+    if: needs.plan.outputs.release == 'true'
+    needs: [plan, binaries, manifests]
     runs-on: ubuntu-latest
+    permissions: {contents: write}
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Docker meta
-        id: meta-rk
-        uses: docker/metadata-action@v5
-        with:
-          images: ghcr.io/${{ github.repository }}
-          flavor: |
-            suffix=-rockchip,onlatest=true
-            latest=auto
-          tags: |
-            type=ref,event=branch
-            type=semver,pattern={{version}},enable=false
-            type=match,pattern=v(.*),group=1
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Login to GitHub Container Registry
-        if: github.event_name != 'pull_request'
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Build and push
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          file: docker/rockchip.Dockerfile
-          platforms: linux/arm64
-          push: ${{ github.event_name != 'pull_request' }}
-          tags: ${{ steps.meta-rk.outputs.tags }}
-          labels: ${{ steps.meta-rk.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+      - uses: actions/checkout@v4
+        with: {persist-credentials: false}
+      - uses: actions/download-artifact@v4
+        with: {pattern: 'binaries-*', path: dist, merge-multiple: true}
+      - uses: actions/download-artifact@v4
+        with: {name: container-manifests, path: dist}
+      - name: Verify and create draft for final review
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          cd dist
+          sha256sum --check SHA256SUMS
+          sha256sum containers.json >> SHA256SUMS
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            echo 'Release exists; refusing to overwrite assets' >&2; exit 1
+          fi
+          gh release create "$RELEASE_TAG" --verify-tag --draft --prerelease --latest=false \
+            --title "${RELEASE_TAG#v} - $(date -u +%F)" --notes-file ../.github/release-notes.md ./*
