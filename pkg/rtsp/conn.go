@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"net/url"
+	"slices"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -90,6 +91,16 @@ const (
 )
 
 func (c *Conn) Handle() (err error) {
+	c.stateMu.Lock()
+	if c.mode == core.ModeActiveProducer && c.state != StatePlay {
+		c.stateMu.Unlock()
+		return nil
+	}
+	// Each playback loop owns its transport and track snapshot. Reconnect may
+	// replace these fields while the previous reader is returning from Close.
+	conn, reader := c.conn, c.reader
+	receivers := slices.Clone(c.Receivers)
+	udp := slices.Clone(c.udpConn)
 	var timeout time.Duration
 
 	switch c.mode {
@@ -103,14 +114,14 @@ func (c *Conn) Handle() (err error) {
 		}
 
 		ctx, cancel := context.WithCancel(context.Background())
-		go c.handleKeepalive(ctx, keepaliveDT)
+		go c.handleKeepalive(ctx, conn, keepaliveDT)
 		defer cancel()
 
 		if c.Timeout == 0 {
 			// polling frames from remote RTSP Server (ex Camera)
 			timeout = time.Second * 5
 
-			if len(c.Receivers) == 0 || c.Transport == "udp" {
+			if len(receivers) == 0 || c.Transport == "udp" {
 				// if we only send audio to camera
 				// https://github.com/AlexxIT/go2rtc/issues/659
 				timeout += keepaliveDT
@@ -132,33 +143,37 @@ func (c *Conn) Handle() (err error) {
 		timeout = time.Second * 60
 
 	default:
+		c.stateMu.Unlock()
 		return fmt.Errorf("wrong RTSP conn mode: %d", c.mode)
 	}
 
-	for i := 0; i < len(c.udpConn); i++ {
-		go c.handleUDPData(byte(i))
+	c.stateMu.Unlock()
+	for i, socket := range udp {
+		go c.handleUDPData(socket, byte(i), receivers)
 	}
-
-	for c.state != StateNone {
-		ts := time.Now()
-
-		_ = c.conn.SetReadDeadline(ts.Add(timeout))
-
-		if err = c.handleTCPData(); err != nil {
+	for {
+		_ = conn.SetReadDeadline(time.Now().Add(timeout))
+		if err = c.handleTCPData(conn, reader, receivers); err != nil {
 			return
 		}
 	}
-
-	return
 }
 
-func (c *Conn) handleKeepalive(ctx context.Context, d time.Duration) {
+func (c *Conn) handleKeepalive(ctx context.Context, conn net.Conn, d time.Duration) {
 	ticker := time.NewTicker(d)
+	defer ticker.Stop()
 	for {
 		select {
 		case <-ticker.C:
+			c.stateMu.Lock()
+			if c.conn != conn {
+				c.stateMu.Unlock()
+				return
+			}
 			req := &tcp.Request{Method: MethodOptions, URL: c.URL}
-			if err := c.WriteRequest(req); err != nil {
+			err := c.WriteRequest(req)
+			c.stateMu.Unlock()
+			if err != nil {
 				return
 			}
 		case <-ctx.Done():
@@ -167,9 +182,8 @@ func (c *Conn) handleKeepalive(ctx context.Context, d time.Duration) {
 	}
 }
 
-func (c *Conn) handleUDPData(channel byte) {
+func (c *Conn) handleUDPData(conn *net.UDPConn, channel byte, receivers []*core.Receiver) {
 	// TODO: handle timeouts and drop TCP connection after any error
-	conn := c.udpConn[channel]
 
 	for {
 		// TP-Link Tapo camera has crazy 10000 bytes packet size
@@ -180,13 +194,13 @@ func (c *Conn) handleUDPData(channel byte) {
 			return
 		}
 
-		if err = c.handleRawPacket(channel, buf[:n]); err != nil {
+		if err = c.handleRawPacket(channel, buf[:n], receivers); err != nil {
 			return
 		}
 	}
 }
 
-func (c *Conn) handleTCPData() error {
+func (c *Conn) handleTCPData(conn net.Conn, reader *bufio.Reader, receivers []*core.Receiver) error {
 	// we can read:
 	// 1. RTP interleaved: `$` + 1B channel number + 2B size
 	// 2. RTSP response:   RTSP/1.0 200 OK
@@ -194,7 +208,7 @@ func (c *Conn) handleTCPData() error {
 	var buf4 []byte // `$` + 1B channel number + 2B size
 	var err error
 
-	buf4, err = c.reader.Peek(4)
+	buf4, err = reader.Peek(4)
 	if err != nil {
 		return err
 	}
@@ -206,23 +220,32 @@ func (c *Conn) handleTCPData() error {
 		switch string(buf4) {
 		case "RTSP":
 			var res *tcp.Response
-			if res, err = c.ReadResponse(); err != nil {
+			if res, err = tcp.ReadResponse(reader); err != nil {
 				return err
 			}
 			c.Fire(res)
 			// for playing backchannel only after OK response on play
-			c.playOK.Store(true)
+			c.stateMu.Lock()
+			if c.conn == conn {
+				c.playOK.Store(true)
+			}
+			c.stateMu.Unlock()
 			return nil
 
 		case "OPTI", "TEAR", "DESC", "SETU", "PLAY", "PAUS", "RECO", "ANNO", "GET_", "SET_":
 			var req *tcp.Request
-			if req, err = c.ReadRequest(); err != nil {
+			if req, err = tcp.ReadRequest(reader); err != nil {
 				return err
 			}
 			c.Fire(req)
 			if req.Method == MethodOptions {
 				res := &tcp.Response{Request: req}
-				if err = c.WriteResponse(res); err != nil {
+				c.stateMu.Lock()
+				if c.conn == conn {
+					err = c.WriteResponse(res)
+				}
+				c.stateMu.Unlock()
+				if err != nil {
 					return err
 				}
 			}
@@ -233,11 +256,11 @@ func (c *Conn) handleTCPData() error {
 
 			for i := 0; ; i++ {
 				// search next start symbol
-				if _, err = c.reader.ReadBytes('$'); err != nil {
+				if _, err = reader.ReadBytes('$'); err != nil {
 					return err
 				}
 
-				if channel, err = c.reader.ReadByte(); err != nil {
+				if channel, err = reader.ReadByte(); err != nil {
 					return err
 				}
 
@@ -247,7 +270,7 @@ func (c *Conn) handleTCPData() error {
 				}
 
 				buf4 = make([]byte, 2)
-				if _, err = io.ReadFull(c.reader, buf4); err != nil {
+				if _, err = io.ReadFull(reader, buf4); err != nil {
 					return err
 				}
 
@@ -270,31 +293,31 @@ func (c *Conn) handleTCPData() error {
 		// get data size
 		size = binary.BigEndian.Uint16(buf4[2:])
 
-		// skip 4 bytes from c.reader.Peek
-		if _, err = c.reader.Discard(4); err != nil {
+		// skip 4 bytes from reader.Peek
+		if _, err = reader.Discard(4); err != nil {
 			return err
 		}
 	}
 
 	// init memory for data
 	buf := make([]byte, size)
-	if _, err = io.ReadFull(c.reader, buf); err != nil {
+	if _, err = io.ReadFull(reader, buf); err != nil {
 		return err
 	}
 
 	c.Recv += int(size)
 
-	return c.handleRawPacket(channel, buf)
+	return c.handleRawPacket(channel, buf, receivers)
 }
 
-func (c *Conn) handleRawPacket(channel byte, buf []byte) error {
+func (c *Conn) handleRawPacket(channel byte, buf []byte, receivers []*core.Receiver) error {
 	if channel&1 == 0 {
 		packet := &rtp.Packet{}
 		if err := packet.Unmarshal(buf); err != nil {
 			return err
 		}
 
-		for _, receiver := range c.Receivers {
+		for _, receiver := range receivers {
 			if receiver.ID == channel {
 				receiver.WriteRTP(packet)
 				break
