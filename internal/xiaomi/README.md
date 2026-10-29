@@ -63,23 +63,32 @@ streams:
   xiaomi1: xiaomi://***&channel=2
 ```
 
-### Experimental dual-lens tracks
+## Shared dual camera
 
-For the verified `xiaomi.camera.082ac1`, `channel=all` requests both video
-tracks through one MISS connection. Use `subtype=3` for high resolution.
-Media IDs `0` and `1` identify protocol channels, with shared microphone
-audio and one physical speaker; they do not label the physical lenses.
-Other models are not enabled without protocol evidence.
+For the verified `xiaomi.camera.082ac1`, declare the ordinary primary URL and
+reference its stream from the second channel with `reuse`:
 
 ```yaml
 streams:
-  camera: xiaomi://***&model=xiaomi.camera.082ac1&channel=all&subtype=3
-  second_lens: rtsp://127.0.0.1:8554/camera?video=copy@1&audio&backchannel=1#backchannel=1
+  primary: xiaomi://USER:cn@CAMERA?did=DID&model=xiaomi.camera.082ac1&subtype=3
+  secondary: xiaomi://USER:cn@CAMERA?did=DID&model=xiaomi.camera.082ac1&subtype=3&channel=2&reuse=primary
 ```
 
-The default RTSP query selects the first video; `video=all` selects both.
-Use the configured RTSP port. Backchannel support must be enabled on every
-proxy hop. Either outlet can supply the shared speaker; the first audio
-source wins until idle for one second. Competing input is dropped, not mixed.
-Preloading an outlet does not claim the speaker. Physical talkback still
-requires device/client validation. Do not add another direct device URL.
+This opens one device connection with two video tracks, a shared microphone and
+one speaker. Either outlet can use the speaker; the first active input owns it
+until it sends no audio packets for one second. Concurrent inputs are not mixed.
+
+The secondary URL must identify the same account, region and device. Omitted
+options inherit the primary's settings; explicit options must match. No local
+RTSP service is required for reuse: the secondary consumes the primary Stream
+through the existing media graph. Existing FFmpeg sources on the primary remain
+available to the secondary.
+
+Declare both streams before startup. Changing their reuse relationship through
+the API requires restarting go2rtc; an active single-track device connection is
+not silently upgraded. Sources without a reuse declaration retain their normal
+single-channel behavior. Other dual camera models are not yet verified.
+
+Protocol media IDs `0` and `1` distinguish video channels; they do not name the
+physical lenses. The earlier `channel=all` and explicit RTSP selection remain
+available for compatibility with existing configurations.
