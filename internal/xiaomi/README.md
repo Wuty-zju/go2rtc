@@ -62,3 +62,25 @@ You can use a second channel for dual cameras: `channel=2`.
 streams:
   xiaomi1: xiaomi://***&channel=2
 ```
+
+## Native Opus packet time
+
+For MISS cameras whose Opus packets contain 20ms coded frames, `ptime=20`
+extracts those frames into separate packets without transcoding:
+
+```yaml
+streams:
+  camera: xiaomi://USER:cn@CAMERA?did=DID&model=MODEL&ptime=20
+```
+
+The RTP clock remains 48000Hz. This does not change the encoded bitrate, repair
+device clock drift, convert Opus to AAC, or guarantee HomeKit compatibility.
+The default path and speaker input are unchanged. Disabled audio, non-Opus and
+single 40/60ms coded frames are unsupported. Incompatible initial audio fails
+the probe; malformed packets during playback are dropped with a gap estimated
+from the last valid packet duration, without reconnecting the device.
+
+When ordered source sequence numbers show a missing packet, the missing interval
+is estimated from the preceding packet duration. Packetization changes inside a
+lost interval, device timestamp drift and reconnect time origins remain outside
+this option's guarantees.

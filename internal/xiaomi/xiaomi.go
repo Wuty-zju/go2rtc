@@ -16,6 +16,7 @@ import (
 	"github.com/AlexxIT/go2rtc/pkg/core"
 	"github.com/AlexxIT/go2rtc/pkg/xiaomi"
 	"github.com/AlexxIT/go2rtc/pkg/xiaomi/crypto"
+	"github.com/AlexxIT/go2rtc/pkg/xiaomi/miss"
 	"github.com/rs/zerolog"
 )
 
@@ -33,6 +34,12 @@ func Init() {
 		u, err := url.Parse(rawURL)
 		if err != nil {
 			return nil, err
+		}
+		if err = miss.ValidatePtime(u.Query()); err != nil {
+			return nil, err
+		}
+		if u.Query().Has("ptime") && xiaomi.IsLegacy(u.Query().Get("model")) {
+			return nil, errors.New("xiaomi: ptime requires a MISS camera")
 		}
 
 		if u.User != nil {
