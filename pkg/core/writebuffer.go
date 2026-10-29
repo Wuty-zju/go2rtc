@@ -2,6 +2,7 @@ package core
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"net/http"
 	"sync"
@@ -44,6 +45,25 @@ func (w *WriteBuffer) WriteTo(wr io.Writer) (n int64, err error) {
 	w.Reset(wr)
 	w.wg.Wait()
 	return 0, w.err // TODO: fix counter
+}
+
+// WriteToContext also releases a reader waiting for its first frame on cancel.
+func (w *WriteBuffer) WriteToContext(ctx context.Context, wr io.Writer) (int64, error) {
+	w.Reset(wr)
+	stop := context.AfterFunc(ctx, func() {
+		w.mu.Lock()
+		if w.err == nil {
+			w.err = ctx.Err()
+			w.done()
+		}
+		w.mu.Unlock()
+	})
+	defer stop()
+	w.wg.Wait()
+	w.mu.Lock()
+	err := w.err
+	w.mu.Unlock()
+	return 0, err
 }
 
 func (w *WriteBuffer) Close() error {
