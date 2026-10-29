@@ -12,6 +12,7 @@ import (
 	"github.com/AlexxIT/go2rtc/pkg/h264"
 	"github.com/AlexxIT/go2rtc/pkg/h264/annexb"
 	"github.com/AlexxIT/go2rtc/pkg/h265"
+	"github.com/AlexxIT/go2rtc/pkg/opus"
 	"github.com/pion/rtp"
 )
 
@@ -19,6 +20,7 @@ type Producer struct {
 	core.Connection
 	client      *Client
 	dual        bool
+	opus20      bool
 	speakerMu   sync.Mutex
 	speaker     *core.Sender
 	stopped     atomic.Bool
@@ -31,6 +33,9 @@ func Dial(rawURL string) (core.Producer, error) {
 		return nil, err
 	}
 	query := u.Query()
+	if err = ValidatePtime(query); err != nil {
+		return nil, err
+	}
 	dual := query.Get("channel") == "all"
 	if dual && query.Get("model") != "xiaomi.camera.082ac1" {
 		return nil, fmt.Errorf("miss: dual-lens streaming is not verified for %s", query.Get("model"))
@@ -51,7 +56,7 @@ func Dial(rawURL string) (core.Producer, error) {
 	if dual {
 		videoCount = 2
 	}
-	medias, err := probe(client, query.Get("audio") != "0", videoCount)
+	medias, err := probe(client, query.Get("audio") != "0", videoCount, query.Has("ptime"))
 	if err != nil {
 		_ = client.Close()
 		return nil, err
@@ -69,6 +74,7 @@ func Dial(rawURL string) (core.Producer, error) {
 		},
 		client: client,
 		dual:   dual,
+		opus20: query.Has("ptime"),
 	}
 	if dual {
 		// Consumers can select another lens after the packet reader has started.
@@ -82,7 +88,16 @@ func Dial(rawURL string) (core.Producer, error) {
 	return producer, nil
 }
 
-func probe(client *Client, audio bool, videoCount int) ([]*core.Media, error) {
+// ValidatePtime is also used before cloud discovery, so invalid options never
+// cause an authentication request or a physical connection attempt.
+func ValidatePtime(query url.Values) error {
+	if query.Has("ptime") && (len(query["ptime"]) != 1 || query.Get("ptime") != "20" || query.Get("audio") == "0") {
+		return fmt.Errorf("xiaomi: ptime requires ptime=20 and enabled Opus audio")
+	}
+	return nil
+}
+
+func probe(client *Client, audio bool, videoCount int, opus20 bool) ([]*core.Media, error) {
 	_ = client.SetDeadline(time.Now().Add(15 * time.Second))
 
 	vcodecs := make([]*core.Codec, videoCount)
@@ -124,10 +139,18 @@ func probe(client *Client, audio bool, videoCount int) ([]*core.Media, error) {
 				}
 			}
 		case codecPCMA:
+			if opus20 {
+				return nil, fmt.Errorf("xiaomi: ptime requires Opus audio")
+			}
 			if acodec == nil {
 				acodec = &core.Codec{Name: core.CodecPCMA, ClockRate: pkt.SampleRate()}
 			}
 		case codecOPUS:
+			if opus20 {
+				if _, err := opus.Split20(pkt.Payload); err != nil {
+					return nil, fmt.Errorf("xiaomi: ptime probe: %w", err)
+				}
+			}
 			if acodec == nil {
 				acodec = &core.Codec{Name: core.CodecOpus, ClockRate: 48000, Channels: 2}
 			}
@@ -174,6 +197,10 @@ const timestamp40ms = 48000 * 0.040
 
 func (p *Producer) Start() error {
 	var audioTS uint32
+	var audioSeq uint16
+	opusSamples := uint32(timestamp40ms)
+	var sourceSeq uint32
+	var haveSourceSeq bool
 	if p.dual {
 		// A replacement producer feeds the existing consumers. Give its audio
 		// clock a local time origin instead of restarting their timeline at zero.
@@ -198,6 +225,7 @@ func (p *Producer) Start() error {
 		// TODO: rewrite this
 		var name string
 		var pkt2 *core.Packet
+		var audioFrames [][]byte
 		var videoCodec *core.Codec
 
 		switch pkt.CodecID {
@@ -242,6 +270,20 @@ func (p *Producer) Start() error {
 			}
 			audioTS += uint32(len(pkt.Payload))
 		case codecOPUS:
+			if p.opus20 {
+				// Preserve a missing interval in an ordered source instead of hiding
+				// packet loss behind the new output sequence. Its duration is estimated
+				// from the previous valid packet; transport owns duplicate filtering.
+				if !haveSourceSeq {
+					sourceSeq = pkt.Sequence
+					haveSourceSeq = true
+				} else if delta := pkt.Sequence - sourceSeq; delta > 0 && delta < 1<<31 {
+					missing := delta - 1
+					audioTS += missing * opusSamples
+					audioSeq += uint16(missing * (opusSamples / 960))
+					sourceSeq = pkt.Sequence
+				}
+			}
 			name = core.CodecOpus
 			pkt2 = &core.Packet{
 				Header: rtp.Header{
@@ -252,13 +294,38 @@ func (p *Producer) Start() error {
 				},
 				Payload: pkt.Payload,
 			}
-			// known cameras sends packets with 40ms long
-			audioTS += timestamp40ms
+			if p.opus20 {
+				audioFrames, err = opus.Split20(pkt.Payload)
+				if err != nil {
+					// A damaged or changed packet must not trigger a reconnect and
+					// another cloud login. Estimate its gap from the last valid packet.
+					audioTS += opusSamples
+					audioSeq += uint16(opusSamples / 960)
+					continue
+				}
+				pkt2.SequenceNumber = audioSeq
+				audioSeq += uint16(len(audioFrames))
+				opusSamples = uint32(len(audioFrames)) * 960
+				audioTS += opusSamples
+			} else {
+				// Known cameras send 40ms packets; preserve default behavior.
+				audioTS += timestamp40ms
+			}
 		}
 
 		for _, recv := range p.Receivers {
 			if recv.Codec.Name == name && (videoCodec == nil || recv.Codec == videoCodec) {
-				recv.WriteRTP(pkt2)
+				if audioFrames == nil {
+					recv.WriteRTP(pkt2)
+				} else {
+					for i, payload := range audioFrames {
+						clone := *pkt2
+						clone.Payload = payload
+						clone.Timestamp += uint32(i) * 960
+						clone.SequenceNumber += uint16(i)
+						recv.WriteRTP(&clone)
+					}
+				}
 				break
 			}
 		}

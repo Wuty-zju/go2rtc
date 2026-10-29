@@ -96,7 +96,7 @@ func TestDualLensProbeAndRouting(t *testing.T) {
 		makeTestFrame(t, key, codecOPUS, 0, 3, []byte{1}),
 	}}
 	client := &Client{Conn: conn, key: key, model: "xiaomi.camera.082ac1"}
-	medias, err := probe(client, true, 2)
+	medias, err := probe(client, true, 2, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -134,7 +134,7 @@ func TestDualLensProbeRequiresBothLenses(t *testing.T) {
 	key := make([]byte, 32)
 	sps, _ := hex.DecodeString("000000016764001fac2484014016ec0440000003004000000c23c60c92")
 	conn := &testConn{frames: []testFrame{makeTestFrame(t, key, codecH264, 0, 1, sps)}}
-	_, err := probe(&Client{Conn: conn, key: key}, false, 2)
+	_, err := probe(&Client{Conn: conn, key: key}, false, 2, false)
 	if err == nil || !strings.Contains(err.Error(), "missing video channel") {
 		t.Fatalf("one lens must not pass dual-lens discovery: %v", err)
 	}
