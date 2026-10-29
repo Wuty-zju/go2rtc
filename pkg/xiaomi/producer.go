@@ -1,6 +1,8 @@
 package xiaomi
 
 import (
+	"errors"
+	"net/url"
 	"strings"
 
 	"github.com/AlexxIT/go2rtc/pkg/core"
@@ -15,6 +17,9 @@ func Dial(rawURL string) (core.Producer, error) {
 	}
 
 	// Format: xiaomi/legacy
+	if u, err := url.Parse(rawURL); err == nil && u.Query().Has("ptime") {
+		return nil, errors.New("xiaomi: ptime requires a MISS camera")
+	}
 	return legacy.Dial(rawURL)
 }
 
