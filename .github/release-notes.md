@@ -7,4 +7,6 @@ Based on upstream go2rtc 1.9.15, with the reviewed Xiaomi changes shared by the 
 
 Automated checks and prior bounded camera evidence cover the scoped changes. Complete Apple Home talkback quality, competing-input handover and long-duration stability remain unqualified. Known camera.ui receiver-side issues are not changed by this fork. This is not an AlexxIT release.
 
-Containers: `ghcr.io/wuty-zju/go2rtc:dev` for development; `:latest` or `:1.9.15.5` for the stable fork. Hardware/rockchip variants retain their upstream suffixes. Development containers use a rolling `dev` tag, without a numbered `_dev` image tag.
+Containers: `ghcr.io/wuty-zju/go2rtc:dev` for development; `:latest` or `:1.9.15.2` for the stable fork. Hardware/rockchip variants retain their upstream suffixes. Development containers use a rolling `dev` tag, without a numbered `_dev` image tag.
+
+This replaces the earlier fork build carrying the same version at the user's explicit request. Identify this rebuild by its full source revision and SHA256SUMS.
