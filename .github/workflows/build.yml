@@ -65,7 +65,7 @@ jobs:
         run: |
           go build -mod=readonly -trimpath -o "$RUNNER_TEMP/go2rtc" .
           "$RUNNER_TEMP/go2rtc" -version
-          go test -race ./pkg/xiaomi/... ./internal/xiaomi
+          go test -race ./pkg/xiaomi/... ./internal/xiaomi ./pkg/opus ./internal/mjpeg
           go test -race ./internal/streams -run '^Test(SourceMediaSelection|Reconnect|ReleasedBackchannel)' -count=1
           go test -race ./pkg/rtsp ./internal/rtsp ./pkg/h264 ./pkg/h265 ./pkg/magic -timeout 120s
           mapfile -t files < <(find pkg/core -maxdepth 1 -name '*.go' ! -name core_test.go | sort)

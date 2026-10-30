@@ -1,5 +1,10 @@
-Based on upstream go2rtc 1.9.15 with Xiaomi dual-lens support (082ac1, explicit channel=all). One device session supplies two video tracks and a shared microphone/speaker. The first active talkback input owns the speaker; another input can take over after one second without accepted audio.
+Based on upstream go2rtc 1.9.15, with the reviewed Xiaomi changes shared by the stable and development builds.
 
-Includes RTSP packet/keyframe handling, H.265 snapshots and stream reconnect fixes. Shared talkback has simulated and loopback coverage; physical HomeKit talkback and long-term stability still need validation.
+- Reuse both 082ac1 lenses through one physical camera connection. Keep the ordinary primary Xiaomi URL; the second channel adds `reuse=<primary stream>`.
+- Share the microphone and one speaker between both outlets. The first active talkback input owns the speaker until one second without accepted audio; inputs are not mixed.
+- Add opt-in `ptime=20` for lossless splitting of supported Opus packets, preserving coded frames and the 48 kHz RTP clock. Defaults and speaker codecs stay unchanged.
+- Improve subscription cleanup, reconnect media identity, RTSP transport ownership and cancelled snapshots. Keep the original architecture; no global camera pool or additional forward-media queue.
 
-Images: `ghcr.io/wuty-zju/go2rtc:dev` for development; `:latest` or `:1.9.15.1` for the stable fork. Upstream hardware/rockchip variants use `-hardware` and `-rockchip`. Development images have no numbered tags. This is a fork build, not an AlexxIT release.
+Automated checks and prior bounded camera evidence cover the scoped changes. Complete Apple Home talkback quality, competing-input handover and long-duration stability remain unqualified. Known camera.ui receiver-side issues are not changed by this fork. This is not an AlexxIT release.
+
+Containers: `ghcr.io/wuty-zju/go2rtc:dev` for development; `:latest` or `:1.9.15.3` for the stable fork. Hardware/rockchip variants retain their upstream suffixes. Development containers use a rolling `dev` tag, without a numbered `_dev` image tag.
