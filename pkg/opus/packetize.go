@@ -11,9 +11,8 @@ var errFrames = errors.New("opus: invalid or non-20ms frames")
 // Single 40/60ms coded frames cannot be split losslessly by this operation.
 // Frame payloads are immutable; a code-0 packet can reuse the original buffer.
 func Split20(packet []byte) ([][]byte, error) {
-	invalid := errFrames
 	if len(packet) == 0 || UnmarshalHeader(packet).FrameSize != 20*time.Millisecond {
-		return nil, invalid
+		return nil, errFrames
 	}
 	data := packet[1:]
 	var storage [6]int
@@ -38,30 +37,30 @@ func Split20(packet []byte) ([][]byte, error) {
 		sizes = append(sizes, len(data))
 	case 1:
 		if len(data)%2 != 0 {
-			return nil, invalid
+			return nil, errFrames
 		}
 		sizes = append(sizes, len(data)/2, len(data)/2)
 	case 2:
 		n, ok := readSize()
 		if !ok || n > len(data) {
-			return nil, invalid
+			return nil, errFrames
 		}
 		sizes = append(sizes, n, len(data)-n)
 	case 3:
 		if len(data) == 0 {
-			return nil, invalid
+			return nil, errFrames
 		}
 		control := data[0]
 		data = data[1:]
 		count := int(control & 63)
 		if count == 0 || count > 6 {
-			return nil, invalid
+			return nil, errFrames
 		}
 		if control&64 != 0 {
 			padding := 0
 			for {
 				if len(data) == 0 {
-					return nil, invalid
+					return nil, errFrames
 				}
 				n := int(data[0])
 				data = data[1:]
@@ -73,13 +72,13 @@ func Split20(packet []byte) ([][]byte, error) {
 				}
 			}
 			if padding > len(data) {
-				return nil, invalid
+				return nil, errFrames
 			}
 			data = data[:len(data)-padding]
 		}
 		if control&128 == 0 {
 			if len(data)%count != 0 {
-				return nil, invalid
+				return nil, errFrames
 			}
 			for range count {
 				sizes = append(sizes, len(data)/count)
@@ -89,13 +88,13 @@ func Split20(packet []byte) ([][]byte, error) {
 			for i := 0; i < count-1; i++ {
 				n, ok := readSize()
 				if !ok {
-					return nil, invalid
+					return nil, errFrames
 				}
 				sizes = append(sizes, n)
 				total += n
 			}
 			if total > len(data) {
-				return nil, invalid
+				return nil, errFrames
 			}
 			sizes = append(sizes, len(data)-total)
 		}
@@ -103,12 +102,12 @@ func Split20(packet []byte) ([][]byte, error) {
 	total := 0
 	for _, n := range sizes {
 		if n < 0 || n > 1275 {
-			return nil, invalid
+			return nil, errFrames
 		}
 		total += n
 	}
 	if total != len(data) {
-		return nil, invalid
+		return nil, errFrames
 	}
 	if packet[0]&3 == 0 {
 		return [][]byte{packet}, nil
@@ -122,9 +121,6 @@ func Split20(packet []byte) ([][]byte, error) {
 		copy(frame[1:], data[:n])
 		data = data[n:]
 		frames[i] = frame
-	}
-	if len(data) != 0 {
-		return nil, invalid
 	}
 	return frames, nil
 }
