@@ -30,6 +30,9 @@ if os.environ['MODE']=='cleanup':
  stable=distribution['versions']['master'];assert not stable.endswith('_dev')
  tags=[name+suffix for name in ['master','dev','latest',stable] for suffix in ['', '-hardware','-rockchip']]
  for tag in tags:visit(tag)
+ # Preserve tagged history and its untagged platform manifests, including older releases.
+ for version in versions:
+  if version['metadata']['container']['tags']:visit(version['name'])
  assert len(keep)>=20
  deleted=[]
  try:
