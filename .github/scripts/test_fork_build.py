@@ -82,10 +82,16 @@ class PublicationPolicy(unittest.TestCase):
         self.assertEqual(self.plan(EVENT_NAME="workflow_dispatch")["publish"], "false")
         self.assertEqual(self.plan(EVENT_NAME="workflow_dispatch", PUBLISH_INPUT="true")["publish"], "true")
 
-    def test_manual_tag_is_validation_only_even_with_publish_input(self):
-        output = self.plan(EVENT_NAME="workflow_dispatch", REF_TYPE="tag", REF_NAME="v1.9.15.1", PUBLISH_INPUT="true")
+    def test_manual_tag_defaults_to_validation_only(self):
+        output = self.plan(EVENT_NAME="workflow_dispatch", REF_TYPE="tag", REF_NAME="v1.9.15.1")
         self.assertEqual(output["publish"], "false")
         self.assertEqual(output["release"], "false")
+        self.assertEqual(output["version"], "1.9.15.1")
+
+    def test_manual_tag_publication_is_explicit(self):
+        output = self.plan(EVENT_NAME="workflow_dispatch", REF_TYPE="tag", REF_NAME="v1.9.15.1", PUBLISH_INPUT="true")
+        self.assertEqual(output["publish"], "true")
+        self.assertEqual(output["release"], "true")
         self.assertEqual(output["version"], "1.9.15.1")
 
     def test_pull_request_cannot_publish(self):

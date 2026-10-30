@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
     inputs:
       publish:
-        description: Publish this master/dev rolling container after validation
+        description: Publish a verified branch image or a new configured release tag
         type: boolean
         default: false
 
@@ -48,6 +48,23 @@ jobs:
           BASE_REF: ${{ github.base_ref }}
           PUBLISH_INPUT: ${{ inputs.publish }}
         run: python3 .github/scripts/fork-build.py plan
+      - name: Refuse to overwrite an existing release
+        if: steps.plan.outputs.release == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          python3 - <<'PY'
+          import os,urllib.request,urllib.error
+          url='https://api.github.com/repos/'+os.environ['GITHUB_REPOSITORY']+'/releases/tags/'+os.environ['RELEASE_TAG']
+          request=urllib.request.Request(url,headers={'Authorization':'Bearer '+os.environ['GH_TOKEN'],'Accept':'application/vnd.github+json'})
+          try:
+              urllib.request.urlopen(request,timeout=20).close()
+          except urllib.error.HTTPError as error:
+              if error.code!=404: raise
+          else:
+              raise SystemExit('Release already exists; refusing to rebuild or overwrite it')
+          PY
 
   validate:
     name: Validate ${{ needs.plan.outputs.channel }}

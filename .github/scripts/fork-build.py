@@ -48,7 +48,8 @@ def plan():
         raise SystemExit('Upstream baseline must be an immutable commit SHA')
     if subprocess.run(['git', 'merge-base', '--is-ancestor', baseline, 'HEAD']).returncode:
         raise SystemExit('Selected upstream baseline is not in the source history')
-    release = tagged and event == 'push'
+    release = tagged and (event == 'push' or (
+        event == 'workflow_dispatch' and os.environ.get('PUBLISH_INPUT') == 'true'))
     publish = release or (event == 'push' and not tagged) or (
         event == 'workflow_dispatch' and not tagged and os.environ.get('PUBLISH_INPUT') == 'true')
     source = dict(channel=channel, sha=git('rev-parse', 'HEAD'),
