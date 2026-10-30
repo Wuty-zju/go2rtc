@@ -1,6 +1,7 @@
 package magic
 
 import (
+	"context"
 	"io"
 
 	"github.com/AlexxIT/go2rtc/pkg/core"
@@ -113,4 +114,8 @@ func (k *Keyframe) CodecName() string {
 
 func (k *Keyframe) WriteTo(wr io.Writer) (int64, error) {
 	return k.wr.WriteTo(wr)
+}
+
+func (k *Keyframe) WriteToContext(ctx context.Context, wr io.Writer) (int64, error) {
+	return k.wr.WriteToContext(ctx, wr)
 }

@@ -101,6 +101,14 @@ func NewSender(media *Media, codec *Codec) *Sender {
 		Media: media,
 		buf:   buf,
 	}
+	s.Node.onClose = func() {
+		s.mu.Lock()
+		if s.buf != nil {
+			close(s.buf)
+			s.buf = nil
+		}
+		s.mu.Unlock()
+	}
 	s.Input = func(packet *Packet) {
 		s.mu.Lock()
 		// unblock write to nil chan - OK, write to closed chan - panic
@@ -160,6 +168,8 @@ func (s *Sender) Wait() {
 }
 
 func (s *Sender) State() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if s.buf == nil {
 		return "closed"
 	}
@@ -170,14 +180,6 @@ func (s *Sender) State() string {
 }
 
 func (s *Sender) Close() {
-	// close buffer if exists
-	s.mu.Lock()
-	if s.buf != nil {
-		close(s.buf) // exit from for range loop
-		s.buf = nil  // prevent writing to closed chan
-	}
-	s.mu.Unlock()
-
 	s.Node.Close()
 }
 
