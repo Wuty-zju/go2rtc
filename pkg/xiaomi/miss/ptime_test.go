@@ -51,7 +51,7 @@ func TestPtimeOptions(t *testing.T) {
 func TestPtimeProbeRejectsIncompatibleAudio(t *testing.T) {
 	for _, packet := range []*Packet{{CodecID: codecPCMA, Payload: []byte{1}}, {CodecID: codecOPUS, Payload: []byte{0x10, 1}}} {
 		client := &Client{Conn: &opusWire{packets: []*Packet{packet}}, key: make([]byte, 32)}
-		if _, err := probe(client, true, true); err == nil || !strings.Contains(err.Error(), "ptime") || errors.Is(err, io.EOF) {
+		if _, err := probe(client, true, 1, true); err == nil || !strings.Contains(err.Error(), "ptime") || errors.Is(err, io.EOF) {
 			t.Fatal("audio was not rejected during its probe", err)
 		}
 	}
