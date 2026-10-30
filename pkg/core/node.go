@@ -27,9 +27,10 @@ type Node struct {
 	Input  HandlerFunc
 	Output HandlerFunc
 
-	id     uint32
-	childs []*Node
-	parent *Node
+	id      uint32
+	childs  []*Node
+	parent  *Node
+	onClose func()
 
 	mu sync.Mutex
 }
@@ -68,9 +69,12 @@ func (n *Node) RemoveChild(child *Node) {
 
 func (n *Node) Close() {
 	n.mu.Lock()
-	parent, childs := n.parent, n.childs
-	n.parent = nil
+	parent, childs, onClose := n.parent, n.childs, n.onClose
+	n.parent, n.onClose = nil, nil
 	n.mu.Unlock()
+	if onClose != nil {
+		onClose()
+	}
 	if parent != nil {
 		parent.RemoveChild(n)
 		parent.mu.Lock()

@@ -2,6 +2,7 @@ package rtsp
 
 import (
 	"encoding/binary"
+	"io"
 	"time"
 
 	"github.com/AlexxIT/go2rtc/pkg/aac"
@@ -262,9 +263,16 @@ func rtpVideoStart(codec string, data []byte) (vcl, keyframe, valid bool) {
 }
 
 func (c *Conn) writeInterleavedData(data []byte) error {
-	if c.Transport != "udp" {
-		_ = c.conn.SetWriteDeadline(time.Now().Add(Timeout))
-		_, err := c.conn.Write(data)
+	c.stateMu.Lock()
+	if !c.playOK.Load() {
+		c.stateMu.Unlock()
+		return io.ErrClosedPipe
+	}
+	conn, transport, udp, addresses := c.conn, c.Transport, c.udpConn, c.udpAddr
+	c.stateMu.Unlock()
+	if transport != "udp" {
+		_ = conn.SetWriteDeadline(time.Now().Add(Timeout))
+		_, err := conn.Write(data)
 		return err
 	}
 
@@ -273,7 +281,10 @@ func (c *Conn) writeInterleavedData(data []byte) error {
 		size := uint16(data[2])<<8 | uint16(data[3])
 		rtpData := data[4 : 4+size]
 
-		if _, err := c.WriteToUDP(rtpData, channel); err != nil {
+		if int(channel) >= len(udp) || int(channel) >= len(addresses) {
+			return io.ErrClosedPipe
+		}
+		if _, err := udp[channel].WriteToUDP(rtpData, addresses[channel]); err != nil {
 			return err
 		}
 

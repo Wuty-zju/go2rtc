@@ -77,8 +77,8 @@ func TestSharedSpeaker(t *testing.T) {
 	send(0, 1, 320)
 	time.Sleep(1100 * time.Millisecond)
 	send(1, 3, 320)
-	if len(wire.packets) != 3 {
-		t.Fatal("idle speaker was not reusable from either input")
+	if len(wire.packets) != 3 || wire.starts != 3 {
+		t.Fatal("idle speaker was not restarted for either input")
 	}
 	raw, err = crypto.Decode(wire.packets[2], make([]byte, 32))
 	if err != nil || !bytes.Equal(raw, bytes.Repeat([]byte{3}, 320)) {
@@ -88,6 +88,26 @@ func TestSharedSpeaker(t *testing.T) {
 	send(0, 4, 320)
 	if len(wire.packets) != 3 {
 		t.Fatal("stopped producer wrote audio")
+	}
+}
+
+func TestSharedSpeakerReleasesDetachedInputs(t *testing.T) {
+	p, _ := sharedSpeaker(t, 0)
+	codec := &core.Codec{Name: core.CodecPCMA, ClockRate: 8000}
+	media := &core.Media{Kind: core.KindAudio, Direction: core.DirectionSendonly, Codecs: []*core.Codec{codec}}
+	for range 100 {
+		input := core.NewReceiver(nil, codec)
+		if err := p.AddTrack(media, codec, input); err != nil {
+			t.Fatal(err)
+		}
+		if len(p.Senders) != 1 {
+			t.Fatal("long-lived camera retained detached speaker inputs", len(p.Senders))
+		}
+		input.Close()
+		if p.Senders[0].State() != "closed" {
+			t.Fatal("detached input kept its sender worker alive")
+		}
+		p.Senders[0].Wait()
 	}
 }
 func TestSpeakerWriteFailureClosesTransport(t *testing.T) {

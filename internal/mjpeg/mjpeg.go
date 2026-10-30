@@ -84,10 +84,12 @@ func handlerKeyframe(w http.ResponseWriter, r *http.Request) {
 	}
 
 	once := &core.OnceBuffer{} // init and first frame
-	_, _ = cons.WriteTo(once)
-	b = once.Buffer()
-
+	_, _ = cons.WriteToContext(r.Context(), once)
 	stream.RemoveConsumer(cons)
+	if r.Context().Err() != nil {
+		return
+	}
+	b = once.Buffer()
 
 	switch cons.CodecName() {
 	case core.CodecH264, core.CodecH265:

@@ -2,6 +2,7 @@ package miss
 
 import (
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/AlexxIT/go2rtc/pkg/core"
@@ -18,6 +19,9 @@ func (p *Producer) AddTrack(media *core.Media, _ *core.Codec, track *core.Receiv
 	}
 	if track.Codec.Name != core.CodecPCMA && track.Codec.Name != core.CodecOpus {
 		return fmt.Errorf("miss: unsupported speaker codec %s", track.Codec.Name)
+	}
+	if p.dual {
+		p.Senders = slices.DeleteFunc(p.Senders, func(sender *core.Sender) bool { return sender.State() == "closed" })
 	}
 	if !p.dual {
 		if err := p.client.StartSpeaker(); err != nil {
@@ -101,7 +105,6 @@ func (p *Producer) AddTrack(media *core.Media, _ *core.Codec, track *core.Receiv
 					_ = p.client.Conn.Close()
 					return
 				}
-				time.Sleep(time.Second) // Same device startup delay as single-lens mode.
 				p.speaker = sender
 			}
 			p.speakerTime = time.Now()

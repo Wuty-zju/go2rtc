@@ -28,8 +28,21 @@ func Init() {
 	tokens = v.Cfg
 
 	log = app.GetLogger("xiaomi")
+	declarations := streams.GetAllSources()
 
 	streams.HandleFunc("xiaomi", func(rawURL string) (core.Producer, error) {
+		reuse, err := planReuse(reuseScope(rawURL, declarations))
+		if err != nil {
+			return nil, err
+		}
+		location, err := resolveReuse(rawURL, reuse, reuseScope(rawURL, streams.GetAllSources()))
+		if err != nil {
+			return nil, err
+		}
+		if location.stream != "" {
+			return newReuseProducer(location.stream)
+		}
+		rawURL = location.url
 		u, err := url.Parse(rawURL)
 		if err != nil {
 			return nil, err
