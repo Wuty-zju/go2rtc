@@ -17,12 +17,13 @@ import (
 
 type Producer struct {
 	core.Connection
-	client      *Client
-	dual        bool
-	speakerMu   sync.Mutex
-	speaker     *core.Sender
-	stopped     atomic.Bool
-	speakerTime time.Time
+	client       *Client
+	dual         bool
+	speakerMu    sync.Mutex
+	speaker      *core.Sender
+	stopped      atomic.Bool
+	speakerTime  time.Time
+	speakerTimer *time.Timer
 }
 
 func Dial(rawURL string) (core.Producer, error) {
@@ -274,6 +275,9 @@ func (p *Producer) Stop() error {
 		// Close transport before joining writers: an audio write may be blocked.
 		err := p.client.Close()
 		p.speakerMu.Lock()
+		if p.speakerTimer != nil {
+			p.speakerTimer.Stop()
+		}
 		_ = p.Connection.Stop()
 		senders := p.Senders
 		p.speakerMu.Unlock()

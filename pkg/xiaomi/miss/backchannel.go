@@ -107,11 +107,33 @@ func (p *Producer) AddTrack(media *core.Media, _ *core.Codec, track *core.Receiv
 				}
 				p.speaker = sender
 			}
-			p.speakerTime = time.Now()
 			handler(packet)
+			p.speakerTime = time.Now()
+			if p.speakerTimer == nil {
+				p.speakerTimer = time.AfterFunc(time.Second, p.stopSpeaker)
+			} else {
+				p.speakerTimer.Reset(time.Second)
+			}
 		}
 	}
 	sender.HandleRTP(track)
 	p.Senders = append(p.Senders, sender)
 	return nil
+}
+
+// Release only the physical speaker; its video and microphone remain in use.
+func (p *Producer) stopSpeaker() {
+	p.speakerMu.Lock()
+	defer p.speakerMu.Unlock()
+	if p.stopped.Load() || p.speaker == nil {
+		return
+	}
+	if remaining := time.Until(p.speakerTime.Add(time.Second)); remaining > 0 {
+		p.speakerTimer.Reset(remaining)
+		return
+	}
+	if err := p.client.StopSpeaker(); err != nil {
+		_ = p.client.Conn.Close()
+	}
+	p.speaker = nil
 }
