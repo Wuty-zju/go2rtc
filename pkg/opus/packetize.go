@@ -11,7 +11,7 @@ var errFrames = errors.New("opus: invalid or non-20ms frames")
 // Single 40/60ms coded frames cannot be split losslessly by this operation.
 // Frame payloads are immutable; a code-0 packet can reuse the original buffer.
 func Split20(packet []byte) ([][]byte, error) {
-	if len(packet) == 0 || UnmarshalHeader(packet).FrameSize != 20*time.Millisecond {
+	if len(packet) == 0 || parseFrameSize(packet[0]>>3) != 20*time.Millisecond {
 		return nil, errFrames
 	}
 	data := packet[1:]
