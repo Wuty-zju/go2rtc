@@ -2,6 +2,7 @@ package miss
 
 import (
 	"bytes"
+	"encoding/binary"
 	"errors"
 	"net"
 	"sync"
@@ -16,13 +17,31 @@ type speakerWire struct {
 	Conn
 	packets      [][]byte
 	starts       int
+	stops        int
 	fail         bool
+	failCommand  uint32
 	closed       chan struct{}
 	writeStarted chan struct{}
 	once         sync.Once
 }
 
-func (w *speakerWire) WriteCommand(_ uint32, _ []byte) error { w.starts++; return nil }
+func (w *speakerWire) WriteCommand(_ uint32, data []byte) error {
+	command, err := crypto.Decode(data, make([]byte, 32))
+	if err != nil {
+		return err
+	}
+	cmd := binary.BigEndian.Uint32(command)
+	if cmd == w.failCommand {
+		return errors.New("speaker command failed")
+	}
+	switch cmd {
+	case cmdSpeakerStartReq:
+		w.starts++
+	case cmdSpeakerStop:
+		w.stops++
+	}
+	return nil
+}
 func (w *speakerWire) WritePacket(_, data []byte) error {
 	if w.writeStarted != nil {
 		close(w.writeStarted)
@@ -76,6 +95,12 @@ func TestSharedSpeaker(t *testing.T) {
 	time.Sleep(1100 * time.Millisecond)
 	send(0, 1, 320)
 	time.Sleep(1100 * time.Millisecond)
+	p.speakerMu.Lock()
+	stops := wire.stops
+	p.speakerMu.Unlock()
+	if stops != 2 {
+		t.Fatal("idle speaker stop command was not sent", stops)
+	}
 	send(1, 3, 320)
 	if len(wire.packets) != 3 || wire.starts != 3 {
 		t.Fatal("idle speaker was not restarted for either input")
@@ -110,6 +135,41 @@ func TestSharedSpeakerReleasesDetachedInputs(t *testing.T) {
 		p.Senders[0].Wait()
 	}
 }
+
+func TestSharedSpeakerIdleReleaseAndResume(t *testing.T) {
+	p, wire := sharedSpeaker(t, 2)
+	packet := &core.Packet{Payload: bytes.Repeat([]byte{1}, 160)}
+	p.Senders[0].Handler(packet)
+	accepted := p.speakerTime
+	p.Senders[1].Handler(packet)
+	p.stopSpeaker() // An old timer must not stop fresh activity.
+	if p.speakerTime != accepted || wire.stops != 0 {
+		t.Fatal("competing input renewed ownership or stale timer stopped speech")
+	}
+	p.speakerMu.Lock()
+	p.speakerTime = time.Now().Add(-2 * time.Second)
+	p.speakerMu.Unlock()
+	p.stopSpeaker()
+	p.stopSpeaker()
+	if wire.stops != 1 {
+		t.Fatal("idle release was not one-shot", wire.stops)
+	}
+	select {
+	case <-wire.closed:
+		t.Fatal("idle speaker release closed forward media")
+	default:
+	}
+	p.Senders[1].Handler(&core.Packet{Payload: bytes.Repeat([]byte{2}, 320)})
+	if wire.starts != 2 || len(wire.packets) != 1 {
+		t.Fatal("speaker did not restart with a fresh frame")
+	}
+	_ = p.Stop()
+	p.stopSpeaker()
+	if wire.stops != 1 {
+		t.Fatal("timer wrote after producer shutdown")
+	}
+}
+
 func TestSpeakerWriteFailureClosesTransport(t *testing.T) {
 	p, wire := sharedSpeaker(t, 1)
 	wire.fail = true
@@ -118,6 +178,21 @@ func TestSpeakerWriteFailureClosesTransport(t *testing.T) {
 	case <-wire.closed:
 	default:
 		t.Fatal("asynchronous write error left media running")
+	}
+}
+
+func TestSpeakerIdleReleaseFailureClosesTransport(t *testing.T) {
+	p, wire := sharedSpeaker(t, 1)
+	p.Senders[0].Handler(&core.Packet{Payload: make([]byte, 320)})
+	p.speakerMu.Lock()
+	wire.failCommand = cmdSpeakerStop
+	p.speakerTime = time.Now().Add(-2 * time.Second)
+	p.speakerMu.Unlock()
+	p.stopSpeaker()
+	select {
+	case <-wire.closed:
+	default:
+		t.Fatal("failed device release left an unknown speaker lease running")
 	}
 }
 

@@ -76,7 +76,9 @@ streams:
 
 This opens one device connection with two video tracks, a shared microphone and
 one speaker. Either outlet can use the speaker; the first active input owns it
-until it sends no audio packets for one second. Concurrent inputs are not mixed.
+until it sends no audio packets for one second. Then the device speaker is
+stopped while video and microphone streaming continue. The next input starts
+it again. Concurrent inputs are not mixed.
 
 The secondary URL must identify the same account, region and device. Omitted
 options inherit the primary's settings; explicit options must match. No local
