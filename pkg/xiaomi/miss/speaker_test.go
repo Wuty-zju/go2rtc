@@ -216,3 +216,42 @@ func TestSpeakerStopJoinsBlockedWriter(t *testing.T) {
 		t.Fatal("writer was not closed")
 	}
 }
+
+func TestSingleSpeakerActivityLifecycle(t *testing.T) {
+	p, wire := sharedSpeaker(t, 0)
+	p.dual = false
+	p.client.model = "chuangmi.camera.81ac1"
+	codec := &core.Codec{Name: core.CodecOpus, ClockRate: 48000, Channels: 2}
+	media := &core.Media{Kind: core.KindAudio, Direction: core.DirectionSendonly, Codecs: []*core.Codec{codec}}
+	if err := p.AddTrack(media, codec, core.NewReceiver(nil, codec)); err != nil {
+		t.Fatal(err)
+	}
+	if wire.starts != 0 {
+		t.Fatal("preloading a single camera claimed the physical speaker")
+	}
+	send := p.Senders[0].Handler
+	send(&core.Packet{})
+	if wire.starts != 0 || len(wire.packets) != 0 {
+		t.Fatal("empty input claimed or wrote the speaker")
+	}
+	send(&core.Packet{Payload: []byte{0xf8, 0xff, 0xfe}})
+	if wire.starts != 1 || len(wire.packets) != 1 {
+		t.Fatal("actual single-camera audio did not start the speaker")
+	}
+	p.speakerMu.Lock()
+	p.speakerTime = time.Now().Add(-2 * time.Second)
+	p.speakerMu.Unlock()
+	p.stopSpeaker()
+	if wire.stops != 1 {
+		t.Fatal("idle single-camera speaker was not released")
+	}
+	send(&core.Packet{Payload: []byte{0xf8, 0xff, 0xfe}})
+	if wire.starts != 2 || len(wire.packets) != 2 {
+		t.Fatal("single-camera speaker did not restart")
+	}
+	_ = p.Stop()
+	send(&core.Packet{Payload: []byte{0xf8, 0xff, 0xfe}})
+	if len(wire.packets) != 2 {
+		t.Fatal("stopped single-camera producer wrote audio")
+	}
+}

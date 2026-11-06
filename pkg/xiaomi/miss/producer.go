@@ -267,27 +267,23 @@ func (p *Producer) Start() error {
 }
 
 func (p *Producer) Stop() error {
-	if p.dual {
-		if p.stopped.Swap(true) {
-			return nil
-		}
-		_ = p.client.StopMedia()
-		// Close transport before joining writers: an audio write may be blocked.
-		err := p.client.Close()
-		p.speakerMu.Lock()
-		if p.speakerTimer != nil {
-			p.speakerTimer.Stop()
-		}
-		_ = p.Connection.Stop()
-		senders := p.Senders
-		p.speakerMu.Unlock()
-		for _, sender := range senders {
-			sender.Wait()
-		}
-		return err
+	if p.stopped.Swap(true) {
+		return nil
 	}
 	_ = p.client.StopMedia()
-	return p.Connection.Stop()
+	// Close transport before joining writers: an audio write may be blocked.
+	err := p.client.Close()
+	p.speakerMu.Lock()
+	if p.speakerTimer != nil {
+		p.speakerTimer.Stop()
+	}
+	_ = p.Connection.Stop()
+	senders := p.Senders
+	p.speakerMu.Unlock()
+	for _, sender := range senders {
+		sender.Wait()
+	}
+	return err
 }
 
 // TimeToRTP convert time in milliseconds to RTP time
