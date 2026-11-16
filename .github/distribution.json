@@ -1,10 +1,10 @@
 {
   "versions": {
-    "master": "1.9.15.2",
-    "dev": "1.9.15.6_dev"
+    "master": "1.9.15.7",
+    "dev": "1.9.15.7_dev"
   },
   "upstream": {
-    "master": "7c05066c90ab6ad1fccb506d5f0408aa31ebe60f",
+    "master": "990f4de3cc21d1cca917d02d0bc40f2fabe75a49",
     "dev": "38e30090f08bf898012b7070ebab4beb1ae2e2d8"
   }
 }
