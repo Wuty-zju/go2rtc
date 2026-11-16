@@ -250,6 +250,9 @@ func (c *Conn) ReadPacket() (hdr, payload []byte, err error) {
 	if !ok {
 		return nil, nil, c.Error()
 	}
+	if len(data) < hdrSize {
+		return nil, nil, fmt.Errorf("cs2: media header too small")
+	}
 	return data[:hdrSize], data[hdrSize:], nil
 }
 
