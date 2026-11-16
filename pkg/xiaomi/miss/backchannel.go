@@ -20,24 +20,14 @@ func (p *Producer) AddTrack(media *core.Media, _ *core.Codec, track *core.Receiv
 	if track.Codec.Name != core.CodecPCMA && track.Codec.Name != core.CodecOpus {
 		return fmt.Errorf("miss: unsupported speaker codec %s", track.Codec.Name)
 	}
-	if p.dual {
-		p.Senders = slices.DeleteFunc(p.Senders, func(sender *core.Sender) bool { return sender.State() == "closed" })
-	}
-	if !p.dual {
-		if err := p.client.StartSpeaker(); err != nil {
-			return err
-		}
-		time.Sleep(time.Second)
-	}
+	p.Senders = slices.DeleteFunc(p.Senders, func(sender *core.Sender) bool { return sender.State() == "closed" })
 
 	sender := core.NewSender(media, track.Codec)
 
 	var buf []byte
 	write := func(codec uint32, payload []byte) {
 		if err := p.client.WriteAudio(codec, payload); err != nil {
-			if p.dual {
-				_ = p.client.Conn.Close() // Wake the media reader and reconnect.
-			}
+			_ = p.client.Conn.Close() // Wake the media reader and reconnect.
 			return
 		}
 		p.Send += len(payload)
@@ -85,33 +75,54 @@ func (p *Producer) AddTrack(media *core.Media, _ *core.Codec, track *core.Receiv
 		}
 	}
 
-	if p.dual {
-		handler := sender.Handler
-		sender.Handler = func(packet *rtp.Packet) {
-			p.speakerMu.Lock()
-			defer p.speakerMu.Unlock()
-			if p.stopped.Load() || len(packet.Payload) == 0 {
+	handler := sender.Handler
+	sender.Handler = func(packet *rtp.Packet) {
+		p.speakerMu.Lock()
+		defer p.speakerMu.Unlock()
+		if p.stopped.Load() || len(packet.Payload) == 0 {
+			return
+		}
+		idle := time.Since(p.speakerTime) >= time.Second
+		if p.speaker != sender && !idle {
+			return
+		}
+		if p.speaker != sender || idle {
+			// A preload is not a talk session. Claim the shared device only
+			// on audio, and discard partial frames when ownership changes.
+			buf = nil
+			if err := p.client.StartSpeaker(); err != nil {
+				_ = p.client.Conn.Close()
 				return
 			}
-			idle := time.Since(p.speakerTime) >= time.Second
-			if p.speaker != sender && !idle {
-				return
-			}
-			if p.speaker != sender || idle {
-				// A preload is not a talk session. Claim the shared device only
-				// on audio, and discard partial frames when ownership changes.
-				buf = nil
-				if err := p.client.StartSpeaker(); err != nil {
-					_ = p.client.Conn.Close()
-					return
-				}
-				p.speaker = sender
-			}
-			p.speakerTime = time.Now()
-			handler(packet)
+			p.speaker = sender
+		}
+		handler(packet)
+		p.speakerTime = time.Now()
+		if p.speakerTimer == nil {
+			p.speakerTimer = time.AfterFunc(time.Second, p.stopSpeaker)
+		} else {
+			p.speakerTimer.Reset(time.Second)
 		}
 	}
+
 	sender.HandleRTP(track)
 	p.Senders = append(p.Senders, sender)
 	return nil
+}
+
+// Release only the physical speaker; its video and microphone remain in use.
+func (p *Producer) stopSpeaker() {
+	p.speakerMu.Lock()
+	defer p.speakerMu.Unlock()
+	if p.stopped.Load() || p.speaker == nil {
+		return
+	}
+	if remaining := time.Until(p.speakerTime.Add(time.Second)); remaining > 0 {
+		p.speakerTimer.Reset(remaining)
+		return
+	}
+	if err := p.client.StopSpeaker(); err != nil {
+		_ = p.client.Conn.Close()
+	}
+	p.speaker = nil
 }

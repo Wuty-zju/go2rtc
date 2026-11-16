@@ -63,6 +63,13 @@ streams:
   xiaomi1: xiaomi://***&channel=2
 ```
 
+## Two-way audio
+
+MISS cameras start the speaker on actual non-empty audio, rather than when a
+backchannel track is attached. After one second without accepted audio, the
+speaker is stopped while video and microphone streaming continue. The next
+input starts it again. Concurrent inputs are not mixed.
+
 ## Shared dual camera
 
 For the verified `xiaomi.camera.082ac1`, declare the ordinary primary URL and
@@ -75,8 +82,8 @@ streams:
 ```
 
 This opens one device connection with two video tracks, a shared microphone and
-one speaker. Either outlet can use the speaker; the first active input owns it
-until it sends no audio packets for one second. Concurrent inputs are not mixed.
+one speaker. Either outlet can use the same activity-based speaker described
+above; the first active input owns it until it becomes idle.
 
 The secondary URL must identify the same account, region and device. Omitted
 options inherit the primary's settings; explicit options must match. No local

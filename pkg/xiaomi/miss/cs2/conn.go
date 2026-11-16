@@ -42,7 +42,7 @@ type Conn struct {
 	channels [4]*dataChannel
 
 	cmdMu  sync.Mutex
-	cmdAck func()
+	cmdAck atomic.Value // func()
 }
 
 const (
@@ -165,8 +165,8 @@ func (c *Conn) worker() {
 			_, _ = c.Conn.Write([]byte{magic, msgPong, 0, 0})
 		case msgPong, msgP2PRdyUDP, msgP2PRdyTCP, msgClose, msgCloseAck: // skip it
 		case msgDrwAck: // only for UDP
-			if c.cmdAck != nil {
-				c.cmdAck()
+			if ack := c.cmdAck.Load(); ack != nil {
+				ack.(func())()
 			}
 		default:
 			fmt.Printf("%s: unknown msg: %x\n", "cs2", buf[:n])
@@ -223,10 +223,10 @@ func (c *Conn) WriteCommand(cmd uint32, data []byte) error {
 	timeout := time.NewTicker(time.Second)
 	defer timeout.Stop()
 
-	c.cmdAck = func() {
+	c.cmdAck.Store(func() {
 		repeat.Store(0)
 		timeout.Reset(1)
-	}
+	})
 
 	for {
 		if _, err := c.Conn.Write(req); err != nil {
@@ -249,6 +249,9 @@ func (c *Conn) ReadPacket() (hdr, payload []byte, err error) {
 	data, ok := c.channels[2].Pop()
 	if !ok {
 		return nil, nil, c.Error()
+	}
+	if len(data) < hdrSize {
+		return nil, nil, fmt.Errorf("cs2: media header too small")
 	}
 	return data[:hdrSize], data[hdrSize:], nil
 }
