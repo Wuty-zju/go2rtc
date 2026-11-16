@@ -322,7 +322,7 @@ jobs:
               assert len(items)==expected,(tag,suffix,len(items))
               image='ghcr.io/wuty-zju/go2rtc'
               tags=[image+':'+tag+suffix]
-              if tag[0].isdigit() and not tag.endswith('_dev'): tags.append(image+':latest'+suffix)
+              if tag[0].isdigit() and not tag.endswith('_dev'): tags.extend([image+':latest'+suffix, image+':master'+suffix])
               subprocess.run(['docker','buildx','imagetools','create',*[a for t in tags for a in ['--tag',t]],*[image+'@'+r['digest'] for r in items]],check=True)
               descriptor=json.loads(subprocess.check_output(['docker','buildx','imagetools','inspect',tags[0],'--format','{{json .Manifest}}']))
               digest=descriptor['digest']

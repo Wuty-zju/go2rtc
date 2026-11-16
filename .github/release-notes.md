@@ -1,12 +1,9 @@
-Based on upstream go2rtc 1.9.15, with the reviewed Xiaomi changes shared by the stable and development builds.
+Maintenance release of the Wuty-zju fork, keeping the existing native Xiaomi configuration and media ownership model.
 
-- Reuse both 082ac1 lenses through one physical camera connection. Keep the ordinary primary Xiaomi URL; the second channel adds `reuse=<primary stream>`.
-- Share the microphone and one speaker between both outlets. The first active talkback input owns the speaker until one second without accepted audio; inputs are not mixed.
-- Add opt-in `ptime=20` for lossless splitting of supported Opus packets, preserving coded frames and the 48 kHz RTP clock. Defaults and speaker codecs stay unchanged.
-- Improve subscription cleanup, reconnect media identity, RTSP transport ownership and cancelled snapshots. Keep the original architecture; no global camera pool or additional forward-media queue.
+- Reuse the activity-based speaker lifecycle for both single- and dual-lens producers. Preview subscriptions no longer start the single-lens speaker; accepted talkback audio starts it, and idle activity releases it.
+- Reject truncated CS2 media headers before slicing and synchronize command acknowledgement callbacks. These are small transport fixes with independent failure regressions.
+- Preserve one physical MISS connection for both lens outlets, the shared microphone and speaker, and lossless optional `ptime=20` framing with the standard 48 kHz Opus RTP clock.
 
-Automated checks and prior bounded camera evidence cover the scoped changes. Complete Apple Home talkback quality, competing-input handover and long-duration stability remain unqualified. Known camera.ui receiver-side issues are not changed by this fork. This is not an AlexxIT release.
+The existing stream names and URLs remain compatible. Receiver-side HKSV3 initialization sampling is maintained separately in the local camera.ui adapter. Automated checks cover the changed boundaries; physical audio quality and iCloud clip availability remain separate acceptance items.
 
-Containers: `ghcr.io/wuty-zju/go2rtc:dev` for development; `:latest` or `:1.9.15.2` for the stable fork. Hardware/rockchip variants retain their upstream suffixes. Development containers use a rolling `dev` tag, without a numbered `_dev` image tag.
-
-This replaces the earlier fork build carrying the same version at the user's explicit request. Identify this rebuild by its full source revision and SHA256SUMS.
+Container: `ghcr.io/wuty-zju/go2rtc:1.9.15.7` (`latest` and `master` aliases; hardware and Rockchip variants keep the corresponding suffixes).
