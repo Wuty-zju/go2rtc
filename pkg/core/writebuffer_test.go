@@ -1,10 +1,35 @@
 package core
 
 import (
+	"bytes"
+	"errors"
+	"io"
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 )
+
+func TestWriteBufferCloseBeforeWriteTo(t *testing.T) {
+	w := NewWriteBuffer(nil)
+	_, _ = w.Write([]byte("init"))
+	_ = w.Close()
+
+	var dst bytes.Buffer
+	done := make(chan error, 1)
+	go func() {
+		_, err := w.WriteTo(&dst)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if !errors.Is(err, io.ErrClosedPipe) || dst.Len() != 0 {
+			t.Fatalf("closed stream returned %v and flushed %d bytes", err, dst.Len())
+		}
+	case <-time.After(time.Second):
+		t.Fatal("closed stream waited for another write")
+	}
+}
 
 // recyclableWriter emulates a net/http response writer: after the handler
 // returns (i.e. WriteTo unblocks), net/http puts the response bufio.Writer
