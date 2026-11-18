@@ -85,6 +85,10 @@ func (w *WriteBuffer) Close() error {
 
 func (w *WriteBuffer) Reset(wr io.Writer) {
 	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.err != nil {
+		return
+	}
 	w.add()
 	if buf, ok := w.Writer.(*bytes.Buffer); ok && buf.Len() != 0 {
 		if _, err := io.Copy(wr, buf); err != nil {
@@ -93,7 +97,6 @@ func (w *WriteBuffer) Reset(wr io.Writer) {
 		}
 	}
 	w.Writer = wr
-	w.mu.Unlock()
 }
 
 const (
