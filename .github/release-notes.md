@@ -1,9 +1,9 @@
-Maintenance release of the Wuty-zju fork, keeping the existing native Xiaomi configuration and media ownership model.
+Maintenance release for native Xiaomi dual-lens streams.
 
-- Reuse the activity-based speaker lifecycle for both single- and dual-lens producers. Preview subscriptions no longer start the single-lens speaker; accepted talkback audio starts it, and idle activity releases it.
-- Reject truncated CS2 media headers before slicing and synchronize command acknowledgement callbacks. These are small transport fixes with independent failure regressions.
-- Preserve one physical MISS connection for both lens outlets, the shared microphone and speaker, and lossless optional `ptime=20` framing with the standard 48 kHz Opus RTP clock.
+- Give each talkback client on the second lens its own input at the shared speaker. Disconnecting one client releases its return track and preserves other active inputs across camera reconnects.
+- Avoid a duplicate speaker-start command when speech resumes before the idle callback runs. Partial audio from the previous speaker is discarded at handoff.
+- Finish an already-closed output immediately if its writer attaches late. This covers clients that disconnect before MP4 streaming starts.
 
-The existing stream names and URLs remain compatible. Receiver-side HKSV3 initialization sampling is maintained separately in the local camera.ui adapter. Automated checks cover the changed boundaries; physical audio quality and iCloud clip availability remain separate acceptance items.
+The existing stream URLs and audio configuration continue to work.
 
-Container: `ghcr.io/wuty-zju/go2rtc:dev` (`dev-hardware`, `dev-rockchip`). Development images use only rolling dev tags.
+Container tags are `dev`, `dev-hardware` and `dev-rockchip`.
