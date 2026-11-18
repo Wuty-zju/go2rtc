@@ -1,52 +1,92 @@
 package core
 
 import (
-	"context"
+	"bytes"
 	"errors"
 	"io"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
 
-func TestWriteBufferCancellation(t *testing.T) {
-	for _, before := range []bool{false, true} {
-		ctx, cancel := context.WithCancel(context.Background())
-		buffer := NewWriteBuffer(nil)
-		var writer io.Writer = io.Discard
-		ready := make(signalWriter)
-		if before {
-			cancel()
-		} else {
-			_, _ = buffer.Write([]byte("priming frame"))
-			writer = ready
+func TestWriteBufferCloseBeforeWriteTo(t *testing.T) {
+	w := NewWriteBuffer(nil)
+	_, _ = w.Write([]byte("init"))
+	_ = w.Close()
+
+	var dst bytes.Buffer
+	done := make(chan error, 1)
+	go func() {
+		_, err := w.WriteTo(&dst)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if !errors.Is(err, io.ErrClosedPipe) || dst.Len() != 0 {
+			t.Fatalf("closed stream returned %v and flushed %d bytes", err, dst.Len())
 		}
-		done := make(chan error, 1)
-		go func() { _, err := buffer.WriteToContext(ctx, writer); done <- err }()
-		if !before {
-			select {
-			case <-ready:
-			case <-time.After(time.Second):
-				t.Fatal("writer did not start")
-			}
-		}
-		cancel()
-		select {
-		case err := <-done:
-			if !errors.Is(err, context.Canceled) {
-				t.Fatal(err)
-			}
-		case <-time.After(time.Second):
-			t.Fatal("cancelled reader waits for a missing frame")
-		}
-		if _, err := buffer.Write([]byte("late frame")); !errors.Is(err, context.Canceled) {
-			t.Fatal("late frame reached cancelled writer", err)
-		}
+	case <-time.After(time.Second):
+		t.Fatal("closed stream waited for another write")
 	}
 }
 
-type signalWriter chan struct{}
+// recyclableWriter emulates a net/http response writer: after the handler
+// returns (i.e. WriteTo unblocks), net/http puts the response bufio.Writer
+// back into a pool. Any Write after that moment reproduces the production
+// panics (nil deref / slice bounds out of range inside bufio).
+type recyclableWriter struct {
+	first    sync.Once
+	ready    chan struct{}
+	recycled atomic.Bool
+	violated atomic.Bool
+}
 
-func (w signalWriter) Write(p []byte) (int, error) {
-	close(w)
+func (w *recyclableWriter) Write(p []byte) (int, error) {
+	w.first.Do(func() { close(w.ready) })
+	if w.recycled.Load() {
+		w.violated.Store(true)
+	}
 	return len(p), nil
+}
+
+func TestWriteBufferCloseBlocksLateWrites(t *testing.T) {
+	wb := NewWriteBuffer(nil)
+	rw := &recyclableWriter{ready: make(chan struct{})}
+
+	// init segment is buffered before WriteTo, Reset will copy it into rw
+	_, _ = wb.Write([]byte("init"))
+
+	handlerDone := make(chan struct{})
+	go func() {
+		_, _ = wb.WriteTo(rw) // handlerMP4: blocks until Close
+		rw.recycled.Store(true)
+		close(handlerDone)
+	}()
+	<-rw.ready // WriteTo has been called, Writer is switched to rw
+
+	// track sender goroutines keep pushing frames
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 100000; j++ {
+				if _, err := wb.Write([]byte("frame")); err != nil {
+					return
+				}
+			}
+		}()
+	}
+
+	_ = wb.Close() // client disconnected -> cons.Stop() -> Transport.Close()
+	<-handlerDone
+	wg.Wait()
+
+	if rw.violated.Load() {
+		t.Fatal("Write after handler return: production panic scenario reproduced")
+	}
+	if _, err := wb.Write([]byte("late")); err == nil {
+		t.Fatal("Write after Close must return error")
+	}
 }
