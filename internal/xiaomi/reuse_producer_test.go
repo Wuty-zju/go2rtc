@@ -12,15 +12,25 @@ import (
 	"github.com/AlexxIT/go2rtc/pkg/core"
 )
 
+type reuseAudio struct {
+	input  *core.Receiver
+	packet *core.Packet
+}
+
 type reuseCamera struct {
 	core.Connection
 	done        chan struct{}
+	started     chan struct{}
 	once        sync.Once
-	audio       chan *core.Packet
+	audio       chan reuseAudio
 	failSpeaker bool
 }
 
-func (c *reuseCamera) Start() error { <-c.done; return io.EOF }
+func (c *reuseCamera) Start() error {
+	close(c.started)
+	<-c.done
+	return io.EOF
+}
 func (c *reuseCamera) Stop() error {
 	c.once.Do(func() { close(c.done) })
 	err := c.Connection.Stop()
@@ -34,14 +44,13 @@ func (c *reuseCamera) AddTrack(m *core.Media, _ *core.Codec, r *core.Receiver) e
 		return errors.New("test speaker unavailable")
 	}
 	s := core.NewSender(m, r.Codec)
-	s.Handler = func(p *core.Packet) { c.audio <- p }
+	s.Handler = func(p *core.Packet) { c.audio <- reuseAudio{r, p} }
 	s.HandleRTP(r)
 	c.Senders = append(c.Senders, s)
 	return nil
 }
-func reuseFixture(t *testing.T, videos int, failSpeaker bool) (*reuseProducer, *reuseCamera, error) {
-	t.Helper()
-	c := &reuseCamera{done: make(chan struct{}), audio: make(chan *core.Packet, 16), failSpeaker: failSpeaker}
+func newReuseCamera(videos int, failSpeaker bool) *reuseCamera {
+	c := &reuseCamera{done: make(chan struct{}), started: make(chan struct{}), audio: make(chan reuseAudio, 16), failSpeaker: failSpeaker}
 	for i := 0; i < videos; i++ {
 		c.Medias = append(c.Medias, &core.Media{ID: string(rune('0' + i)), Kind: core.KindVideo, Direction: core.DirectionRecvonly, Codecs: []*core.Codec{{Name: core.CodecH264, ClockRate: 90000}}})
 	}
@@ -52,7 +61,21 @@ func reuseFixture(t *testing.T, videos int, failSpeaker bool) (*reuseProducer, *
 			c.GetTrack(m, m.Codecs[0])
 		}
 	}
-	streams.HandleFunc("reuse-test", func(string) (core.Producer, error) { return c, nil })
+	return c
+}
+
+func reuseFixture(t *testing.T, videos int, failSpeaker bool, replacements ...*reuseCamera) (*reuseProducer, *reuseCamera, error) {
+	t.Helper()
+	c := newReuseCamera(videos, failSpeaker)
+	cameras := append([]*reuseCamera{c}, replacements...)
+	streams.HandleFunc("reuse-test", func(string) (core.Producer, error) {
+		if len(cameras) == 0 {
+			return nil, errors.New("test: unexpected camera dial")
+		}
+		camera := cameras[0]
+		cameras = cameras[1:]
+		return camera, nil
+	})
 	if _, err := streams.New("reuse-owner", "reuse-test:camera"); err != nil {
 		t.Fatal(err)
 	}
@@ -128,7 +151,7 @@ func TestReuseProducerLifetimeAndBackchannel(t *testing.T) {
 	input.Input(&core.Packet{Payload: []byte{7, 8}})
 	select {
 	case actual := <-c.audio:
-		if !bytes.Equal(actual.Payload, []byte{7, 8}) {
+		if !bytes.Equal(actual.packet.Payload, []byte{7, 8}) {
 			t.Fatal("speaker payload changed")
 		}
 	case <-time.After(time.Second):
@@ -157,5 +180,88 @@ func TestReuseProducerRejectsMissingLensAndSpeaker(t *testing.T) {
 		if m.Direction == core.DirectionSendonly {
 			t.Fatal("failed speaker attachment was advertised")
 		}
+	}
+}
+
+func TestReuseSpeakerInputsKeepTheirIdentity(t *testing.T) {
+	next := newReuseCamera(2, false)
+	p, camera, err := reuseFixture(t, 2, false, next)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var back *core.Media
+	for _, m := range p.Medias {
+		if m.Direction == core.DirectionSendonly {
+			back = m
+		}
+	}
+	if back == nil {
+		t.Fatal("missing speaker")
+	}
+	attach := func() *core.Receiver {
+		input := core.NewReceiver(back, back.Codecs[0])
+		if err := p.AddTrack(back, back.Codecs[0], input); err != nil {
+			t.Fatal(err)
+		}
+		return input
+	}
+	ownerInput := func(input *core.Receiver) *core.Receiver {
+		packet := &core.Packet{Payload: []byte{3}}
+		input.Input(packet)
+		select {
+		case got := <-camera.audio:
+			if got.packet != packet {
+				t.Fatal("changed return packet")
+			}
+			return got.input
+		case <-time.After(time.Second):
+			t.Fatal("missing return packet")
+			return nil
+		}
+	}
+	first, second := attach(), attach()
+	if len(camera.audio) != 0 {
+		t.Fatal("idle return tracks wrote audio")
+	}
+	firstOwner, secondOwner := ownerInput(first), ownerInput(second)
+	if firstOwner == secondOwner {
+		t.Fatal("two clients appeared as one input to the physical speaker")
+	}
+	first.Close()
+	deadline := time.Now().Add(time.Second)
+	for len(firstOwner.Senders()) > 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if len(firstOwner.Senders()) != 0 || ownerInput(second) != secondOwner {
+		t.Fatal("disconnect did not release only its own speaker input")
+	}
+	// A subscriber on the primary remains attached through both reconnect and projection stop.
+	direct := &reuseConsumer{output: p}
+	direct.Medias = []*core.Media{{Kind: core.KindAudio, Direction: core.DirectionRecvonly, Codecs: back.Codecs}}
+	if err = p.source.AddConsumer(direct); err != nil {
+		t.Fatal(err)
+	}
+	defer p.source.RemoveConsumer(direct)
+	primary := direct.Receivers[0]
+	if got := ownerInput(primary); got != primary || got == secondOwner {
+		t.Fatal("direct and projected inputs share an identity")
+	}
+
+	camera.once.Do(func() { close(camera.done) })
+	select {
+	case <-next.started:
+	case <-time.After(time.Second):
+		t.Fatal("camera did not reconnect")
+	}
+	camera = next
+	if len(next.GetSenderSources()) != 2 || ownerInput(second) != secondOwner || ownerInput(primary) != primary {
+		t.Fatal("reconnect did not preserve exactly the two live inputs")
+	}
+	p.Stop()
+	if ownerInput(primary) != primary || len(next.GetSenderSources()) != 1 {
+		t.Fatal("projection stop disturbed the primary speaker")
+	}
+	if len(secondOwner.Senders()) != 0 || len(second.Senders()) != 0 {
+		t.Fatal("projection stop retained a speaker subscription")
 	}
 }
