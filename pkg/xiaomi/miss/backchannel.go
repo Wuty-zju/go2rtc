@@ -86,14 +86,15 @@ func (p *Producer) AddTrack(media *core.Media, _ *core.Codec, track *core.Receiv
 		if p.speaker != sender && !idle {
 			return
 		}
-		if p.speaker != sender || idle {
-			// A preload is not a talk session. Claim the shared device only
-			// on audio, and discard partial frames when ownership changes.
-			buf = nil
+		// The idle timer may not have stopped the physical device yet.
+		if p.speaker == nil {
 			if err := p.client.StartSpeaker(); err != nil {
 				_ = p.client.Conn.Close()
 				return
 			}
+		}
+		if p.speaker != sender || idle {
+			buf = nil // Discard partial audio when a talk session changes.
 			p.speaker = sender
 		}
 		handler(packet)

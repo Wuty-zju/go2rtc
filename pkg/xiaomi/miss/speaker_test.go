@@ -255,3 +255,22 @@ func TestSingleSpeakerActivityLifecycle(t *testing.T) {
 		t.Fatal("stopped single-camera producer wrote audio")
 	}
 }
+
+func TestSpeakerTakeoverBeforeIdleTimerRuns(t *testing.T) {
+	p, wire := sharedSpeaker(t, 2)
+	p.Senders[0].Handler(&core.Packet{Payload: bytes.Repeat([]byte{1}, 160)})
+	p.speakerMu.Lock()
+	p.speakerTimer.Stop()
+	p.speakerTime = time.Now().Add(-2 * time.Second)
+	p.speakerMu.Unlock()
+
+	p.Senders[1].Handler(&core.Packet{Payload: bytes.Repeat([]byte{2}, 320)})
+	p.stopSpeaker() // The delayed callback may still run after takeover.
+	if wire.starts != 1 || wire.stops != 0 || len(wire.packets) != 1 {
+		t.Fatalf("device got %d starts, %d stops and %d packets", wire.starts, wire.stops, len(wire.packets))
+	}
+	raw, err := crypto.Decode(wire.packets[0], make([]byte, 32))
+	if err != nil || !bytes.Equal(raw, bytes.Repeat([]byte{2}, 320)) {
+		t.Fatal("previous speaker audio reached the new input", err)
+	}
+}

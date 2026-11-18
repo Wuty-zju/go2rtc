@@ -14,7 +14,8 @@ type reuseProducer struct {
 	core.Connection
 	source  *streams.Stream
 	input   *reuseConsumer
-	speaker *core.Receiver
+	speaker *core.Codec
+	returns sync.WaitGroup
 	done    chan struct{}
 	once    sync.Once
 }
@@ -42,7 +43,8 @@ func newReuseProducer(name string) (core.Producer, error) {
 	}
 	for _, track := range c.Receivers {
 		if track.Media.Direction == core.DirectionRecvonly && len(track.Senders()) > 0 {
-			p.speaker = track
+			p.speaker = track.Codec
+			track.Close() // Only probe the codec. Each return input attaches separately.
 			p.Medias = append(p.Medias, &core.Media{Kind: core.KindAudio, Direction: core.DirectionSendonly, Codecs: []*core.Codec{track.Codec}})
 			break
 		}
@@ -78,18 +80,31 @@ func (p *reuseProducer) AddTrack(m *core.Media, _ *core.Codec, track *core.Recei
 		return errors.New("xiaomi: reuse is stopped")
 	default:
 	}
-	target := p.speaker
-	if target == nil {
+	if p.speaker == nil {
 		return errors.New("xiaomi: reuse source has no speaker")
 	}
-	if !target.Codec.Match(track.Codec) {
+	if !p.speaker.Match(track.Codec) {
 		return errors.New("xiaomi: incompatible reuse speaker codec")
+	}
+	// Preserve each input's identity at the owner, including across reconnects.
+	c := &reuseConsumer{output: p}
+	c.Connection = core.Connection{
+		ID: core.NewID(), FormatName: "xiaomi/reuse", Source: p.input.Source,
+		Medias: []*core.Media{{Kind: core.KindAudio, Direction: core.DirectionRecvonly, Codecs: []*core.Codec{p.speaker}}},
+	}
+	if err := p.source.AddConsumer(c); err != nil {
+		_ = c.Stop()
+		return err
 	}
 	p.Senders = slices.DeleteFunc(p.Senders, func(s *core.Sender) bool { return s.State() == "closed" })
 	s := core.NewSender(m, track.Codec)
-	s.Handler = target.Input
+	s.Handler = c.Receivers[0].Input
 	s.HandleRTP(track)
 	p.Senders = append(p.Senders, s)
+	p.returns.Go(func() {
+		s.Wait()
+		p.source.RemoveConsumer(c)
+	})
 	return nil
 }
 
@@ -98,6 +113,7 @@ func (p *reuseProducer) Start() error { <-p.done; return nil }
 func (p *reuseProducer) Stop() error {
 	p.once.Do(func() {
 		_ = p.Connection.Stop()
+		p.returns.Wait()
 		p.source.RemoveConsumer(p.input)
 		close(p.done)
 	})
