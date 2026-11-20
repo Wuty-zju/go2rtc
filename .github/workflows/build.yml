@@ -86,15 +86,15 @@ jobs:
           go build -mod=readonly -trimpath -o "$RUNNER_TEMP/go2rtc" .
           "$RUNNER_TEMP/go2rtc" -version
           go test -race ./pkg/xiaomi/... ./internal/xiaomi ./pkg/opus ./internal/mjpeg
-          go test -race ./internal/streams -run '^Test(SourceMediaSelection|Reconnect|ReleasedBackchannel)' -count=1
+          go test -race ./internal/streams -count=1
           go test -race ./pkg/rtsp ./internal/rtsp ./pkg/h264 ./pkg/h265 ./pkg/magic -timeout 120s
           mapfile -t files < <(find pkg/core -maxdepth 1 -name '*.go' ! -name core_test.go | sort)
           go test -race "${files[@]}" -count=1
           go vet -copylocks=false ./pkg/xiaomi/... ./internal/xiaomi ./internal/streams ./pkg/rtsp ./pkg/magic
           git diff --exit-code
-      - name: Full core and streams race on the dev baseline
+      - name: Full core race on the dev baseline
         if: needs.plan.outputs.baseline_name == 'dev'
-        run: go test -race ./pkg/core ./internal/streams
+        run: go test -race ./pkg/core
       - name: Compare test-inclusive vet failures with the exact upstream baseline
         env:
           BASELINE_SHA: ${{ needs.plan.outputs.baseline_sha }}

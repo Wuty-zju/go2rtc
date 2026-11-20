@@ -1,9 +1,9 @@
-Maintenance release for native Xiaomi dual-lens streams.
+Maintenance update for Xiaomi dual-lens streams and talkback.
 
-- Give each talkback client on the second lens its own input at the shared speaker. Disconnecting one client releases its return track and preserves other active inputs across camera reconnects.
-- Avoid a duplicate speaker-start command when speech resumes before the idle callback runs. Partial audio from the previous speaker is discarded at handoff.
-- Finish an already-closed output immediately if its writer attaches late. This covers clients that disconnect before MP4 streaming starts.
+- Release each talkback input when its client leaves, including while another client keeps the video preview open.
+- Check the primary camera owner from either lens, so ambiguous reuse declarations report the same error whichever stream opens first.
+- Bring in upstream Xiaomi CS2 discovery retries and IP address matching. Each handshake phase now sends its retries to its original endpoint.
 
-The existing stream URLs and audio configuration continue to work.
+Existing Xiaomi stream URLs and audio settings work as before.
 
 Container tags are `dev`, `dev-hardware` and `dev-rockchip`.
