@@ -40,9 +40,9 @@ type reuseSource struct {
 
 // Plan before any producer is dialed. The primary Stream owns the device;
 // the second URL consumes its other video through the existing media graph.
-func planReuse(sources map[string][]string) (map[string]reuseSource, error) {
+func planReuse(rawURL string, sources map[string][]string) (map[string]reuseSource, error) {
 	plan := make(map[string]reuseSource)
-	for name, list := range sources {
+	for name, list := range reuseScope(rawURL, sources) {
 		for _, source := range list {
 			if !strings.HasPrefix(source, "xiaomi:") {
 				continue
@@ -105,7 +105,7 @@ func planReuse(sources map[string][]string) (map[string]reuseSource, error) {
 }
 
 func resolveReuse(source string, planned map[string]reuseSource, sources map[string][]string) (reuseSource, error) {
-	current, err := planReuse(sources)
+	current, err := planReuse(source, sources)
 	if err != nil {
 		return reuseSource{}, err
 	}
