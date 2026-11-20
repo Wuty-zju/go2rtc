@@ -32,11 +32,11 @@ func Init() {
 	declarations := streams.GetAllSources()
 
 	streams.HandleFunc("xiaomi", func(rawURL string) (core.Producer, error) {
-		reuse, err := planReuse(reuseScope(rawURL, declarations))
+		reuse, err := planReuse(rawURL, declarations)
 		if err != nil {
 			return nil, err
 		}
-		location, err := resolveReuse(rawURL, reuse, reuseScope(rawURL, streams.GetAllSources()))
+		location, err := resolveReuse(rawURL, reuse, streams.GetAllSources())
 		if err != nil {
 			return nil, err
 		}
