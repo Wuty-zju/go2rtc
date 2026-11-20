@@ -3,6 +3,7 @@ package streams
 import (
 	"errors"
 	"strings"
+	"weak"
 
 	"github.com/AlexxIT/go2rtc/pkg/core"
 )
@@ -14,6 +15,7 @@ func (s *Stream) AddConsumer(cons core.Consumer) (err error) {
 	var prodErrors = make([]error, len(s.producers))
 	var prodMedias []*core.Media
 	var prodStarts []*Producer
+	consumer := streamConsumer{Consumer: cons}
 
 	// Step 1. Get consumer medias
 	consMedias := cons.GetMedias()
@@ -77,11 +79,13 @@ func (s *Stream) AddConsumer(cons core.Consumer) (err error) {
 						continue
 					}
 					// Step 5. Add track to producer
-					if err = prod.AddTrack(prodMedia, prodCodec, track); err != nil {
+					var back *backchannel
+					if back, err = prod.addTrack(prodMedia, prodCodec, track); err != nil {
 						log.Info().Err(err).Msg("[streams] can't add track")
 						prodErrors[prodN] = err
 						continue
 					}
+					consumer.backchannels = append(consumer.backchannels, weak.Make(back))
 				}
 
 				prodStarts = append(prodStarts, prod)
@@ -103,7 +107,7 @@ func (s *Stream) AddConsumer(cons core.Consumer) (err error) {
 	}
 
 	s.mu.Lock()
-	s.consumers = append(s.consumers, cons)
+	s.consumers = append(s.consumers, consumer)
 	s.mu.Unlock()
 
 	// there may be duplicates, but that's not a problem
