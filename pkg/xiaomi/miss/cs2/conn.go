@@ -353,12 +353,13 @@ func (c *udpConn) RemoteAddr() net.Addr {
 func (c *udpConn) WriteUntil(req []byte, ok func(res []byte) bool) ([]byte, error) {
 	done := make(chan struct{})
 	defer close(done)
+	peer := *c.addr
 
 	go func() {
 		for {
 			// Continue retransmitting regardless of send errors until the
 			// expected response arrives or the deadline expires.
-			_, _ = c.Write(req)
+			_, _ = c.UDPConn.WriteToUDP(req, &peer)
 
 			select {
 			case <-done:
