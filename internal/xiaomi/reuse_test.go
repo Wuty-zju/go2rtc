@@ -17,7 +17,7 @@ func TestReuseScope(t *testing.T) {
 		"unrelated": {"xiaomi://other:cn@192.0.2.2?channel=2&reuse=missing"},
 	}
 	for _, source := range []string{reusePrimary, reuseSecondary, mono} {
-		plan, err := planReuse(reuseScope(source, sources))
+		plan, err := planReuse(source, sources)
 		if err != nil {
 			t.Fatal("an unrelated invalid declaration disabled this camera", err)
 		}
@@ -32,7 +32,7 @@ func TestReuse(t *testing.T) {
 		"secondary": {reuseSecondary},
 		"primary":   {"ffmpeg:primary#audio=opus/24000", reusePrimary},
 	}
-	plan, err := planReuse(sources)
+	plan, err := planReuse(reusePrimary, sources)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -50,11 +50,11 @@ func TestReuse(t *testing.T) {
 	}
 	// Declared primary options can be inherited by omitting them on the second URL.
 	sources["secondary"] = []string{strings.Replace(reuseSecondary, "&subtype=3", "", 1)}
-	if _, err = planReuse(sources); err != nil {
+	if _, err = planReuse(reusePrimary, sources); err != nil {
 		t.Fatal(err)
 	}
 	sources = map[string][]string{"primary": {reusePrimary}}
-	plan, err = planReuse(sources)
+	plan, err = planReuse(reusePrimary, sources)
 	got, resolveErr := resolveReuse(reusePrimary, plan, sources)
 	if err != nil || resolveErr != nil || len(plan) != 0 || got.url != reusePrimary || got.stream != "" {
 		t.Fatal("ordinary single-channel source changed", err, resolveErr)
@@ -83,7 +83,7 @@ func TestReuseRejectsInvalidDependencies(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			sources := map[string][]string{"primary": {tc.primary}, "secondary": {tc.secondary}}
-			if _, err := planReuse(sources); err == nil {
+			if _, err := planReuse(tc.secondary, sources); err == nil {
 				t.Fatal("invalid dependency accepted")
 			}
 		})
@@ -92,15 +92,26 @@ func TestReuseRejectsInvalidDependencies(t *testing.T) {
 		{"primary": {reusePrimary, reusePrimary}, "secondary": {reuseSecondary}},
 		{"primary": {reusePrimary}, "secondary": {reuseSecondary}, "other": {reusePrimary}},
 	} {
-		if _, err := planReuse(duplicate); err == nil {
+		if _, err := planReuse(reusePrimary, duplicate); err == nil {
 			t.Fatal("ambiguous device ownership accepted")
+		}
+	}
+}
+
+func TestReuseDuplicatePrimaryAtDial(t *testing.T) {
+	sources := map[string][]string{
+		"primary": {reusePrimary}, "secondary": {reuseSecondary}, "duplicate": {reusePrimary},
+	}
+	for _, source := range []string{reusePrimary, reuseSecondary} {
+		if _, err := planReuse(source, sources); err == nil {
+			t.Errorf("accepted duplicate primary when dialing %s", source)
 		}
 	}
 }
 
 func TestReuseAPIChangesRequireRestart(t *testing.T) {
 	sources := map[string][]string{"primary": {reusePrimary}, "secondary": {reuseSecondary}}
-	planned, err := planReuse(sources)
+	planned, err := planReuse(reusePrimary, sources)
 	if err != nil {
 		t.Fatal(err)
 	}

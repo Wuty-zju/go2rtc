@@ -4,15 +4,27 @@ import (
 	"encoding/json"
 	"sync"
 	"sync/atomic"
+	"weak"
 
 	"github.com/AlexxIT/go2rtc/pkg/core"
 )
 
 type Stream struct {
 	producers []*Producer
-	consumers []core.Consumer
+	consumers []streamConsumer
 	mu        sync.Mutex
 	pending   atomic.Int32
+}
+
+type streamConsumer struct {
+	core.Consumer
+	// A producer may already have stopped or discarded the registration on
+	// reconnect while this consumer remains subscribed to other tracks.
+	backchannels []weak.Pointer[backchannel]
+}
+
+func (c streamConsumer) MarshalJSON() ([]byte, error) {
+	return json.Marshal(c.Consumer)
 }
 
 func NewStream(source any) *Stream {
@@ -67,15 +79,7 @@ func (s *Stream) SetSource(source string) {
 func (s *Stream) RemoveConsumer(cons core.Consumer) {
 	_ = cons.Stop()
 
-	s.mu.Lock()
-	for i, consumer := range s.consumers {
-		if consumer == cons {
-			s.consumers = append(s.consumers[:i], s.consumers[i+1:]...)
-			break
-		}
-	}
-	s.mu.Unlock()
-
+	s.RemoveInternalConsumer(cons)
 	s.stopProducers()
 }
 
@@ -115,8 +119,8 @@ func (s *Stream) stopProducers() {
 
 func (s *Stream) MarshalJSON() ([]byte, error) {
 	var info = struct {
-		Producers []*Producer     `json:"producers"`
-		Consumers []core.Consumer `json:"consumers"`
+		Producers []*Producer      `json:"producers"`
+		Consumers []streamConsumer `json:"consumers"`
 	}{
 		Producers: s.producers,
 		Consumers: s.consumers,

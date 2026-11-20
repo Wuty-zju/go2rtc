@@ -3,6 +3,7 @@ package streams
 import (
 	"encoding/json"
 	"errors"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -30,11 +31,27 @@ type Producer struct {
 	conn           core.Producer
 	receivers      []*core.Receiver
 	receiverMedias []*core.Media
-	senders        []*core.Receiver
+	senders        []*backchannel
 
 	state    state
 	mu       sync.Mutex
 	workerID int
+}
+
+// Each successful attachment has its own registration, even if two
+// consumers supply the same receiver.
+type backchannel struct {
+	*core.Receiver
+	producer *Producer
+}
+
+func (b *backchannel) remove() {
+	p := b.producer
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if i := slices.Index(p.senders, b); i >= 0 {
+		p.senders = slices.Delete(p.senders, i, i+1)
+	}
 }
 
 const SourceTemplate = "{input}"
@@ -113,24 +130,30 @@ func (p *Producer) GetTrack(media *core.Media, codec *core.Codec) (*core.Receive
 }
 
 func (p *Producer) AddTrack(media *core.Media, codec *core.Codec, track *core.Receiver) error {
+	_, err := p.addTrack(media, codec, track)
+	return err
+}
+
+func (p *Producer) addTrack(media *core.Media, codec *core.Codec, track *core.Receiver) (*backchannel, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
 	if p.state == stateNone {
-		return errors.New("add track from none state")
+		return nil, errors.New("add track from none state")
 	}
 
 	if err := p.conn.(core.Consumer).AddTrack(media, codec, track); err != nil {
-		return err
+		return nil, err
 	}
 
-	p.senders = append(p.senders, track)
+	b := &backchannel{Receiver: track, producer: p}
+	p.senders = append(p.senders, b)
 
 	if p.state == stateMedias {
 		p.state = stateTracks
 	}
 
-	return nil
+	return b, nil
 }
 
 func (p *Producer) MarshalJSON() ([]byte, error) {
@@ -269,7 +292,7 @@ func (p *Producer) reconnect(workerID, retry int) {
 					continue
 				}
 
-				_ = conn.(core.Consumer).AddTrack(media, codec, sender)
+				_ = conn.(core.Consumer).AddTrack(media, codec, sender.Receiver)
 			}
 		}
 	}
@@ -284,8 +307,8 @@ func (p *Producer) reconnect(workerID, retry int) {
 
 // activeSenders must be called with p.mu held. A source may have subscribers
 // belonging to other destinations, so its global child count is insufficient.
-func (p *Producer) activeSenders() []*core.Receiver {
-	var active []*core.Receiver
+func (p *Producer) activeSenders() []*backchannel {
+	var active []*backchannel
 	if conn, ok := p.conn.(interface{ GetSenderSources() []*core.Node }); ok {
 		sources := conn.GetSenderSources()
 		for _, receiver := range p.senders {

@@ -2,7 +2,9 @@ package streams
 
 import (
 	"errors"
+	"slices"
 	"time"
+	"weak"
 
 	"github.com/AlexxIT/go2rtc/pkg/core"
 )
@@ -117,19 +119,26 @@ func (s *Stream) AddInternalProducer(conn core.Producer) {
 
 func (s *Stream) AddInternalConsumer(conn core.Consumer) {
 	s.mu.Lock()
-	s.consumers = append(s.consumers, conn)
+	s.consumers = append(s.consumers, streamConsumer{Consumer: conn})
 	s.mu.Unlock()
 }
 
 func (s *Stream) RemoveInternalConsumer(conn core.Consumer) {
+	var backchannels []weak.Pointer[backchannel]
 	s.mu.Lock()
 	for i, consumer := range s.consumers {
-		if consumer == conn {
-			s.consumers = append(s.consumers[:i], s.consumers[i+1:]...)
+		if consumer.Consumer == conn {
+			backchannels = consumer.backchannels
+			s.consumers = slices.Delete(s.consumers, i, i+1)
 			break
 		}
 	}
 	s.mu.Unlock()
+	for _, ref := range backchannels {
+		if back := ref.Value(); back != nil {
+			back.remove()
+		}
+	}
 }
 
 func matchMedia(prod core.Producer, cons core.Consumer) bool {
