@@ -45,6 +45,9 @@ func (c *Conn) GetTrack(media *core.Media, codec *core.Codec) (*core.Receiver, e
 
 	track := core.NewReceiver(media, codec)
 	track.ID = channel
+	if c.Keyframe == KeyframeResetup && media.Kind == core.KindVideo {
+		track.OnKeyframe(c.RequestKeyframe)
+	}
 	c.Receivers = append(c.Receivers, track)
 
 	return track, nil
@@ -103,6 +106,10 @@ func (c *Conn) Stop() (err error) {
 	if c.state != StateNone {
 		c.state = StateNone
 		err = c.Close()
+	}
+	if c.backchannel != nil {
+		_ = c.backchannel.Stop()
+		c.backchannel = nil
 	}
 	c.stateMu.Unlock()
 

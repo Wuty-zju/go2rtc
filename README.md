@@ -101,7 +101,7 @@ Download binary for your OS from [latest release](https://github.com/AlexxIT/go2
 | [go2rtc_linux_arm](https://github.com/AlexxIT/go2rtc/releases/latest/download/go2rtc_linux_arm)                 | Linux ARM 32-bit (ex. Raspberry 32-bit OS)                                                                                                |
 | [go2rtc_linux_armv6](https://github.com/AlexxIT/go2rtc/releases/latest/download/go2rtc_linux_armv6)             | Linux ARMv6 (for old Raspberry 1 and Zero)                                                                                                |
 | [go2rtc_linux_mipsel](https://github.com/AlexxIT/go2rtc/releases/latest/download/go2rtc_linux_mipsel)           | Linux MIPS (ex. [Xiaomi Gateway 3](https://github.com/AlexxIT/XiaomiGateway3), [Wyze cameras](https://github.com/gtxaspec/wz_mini_hacks)) |
-| [go2rtc_mac_amd64.zip](https://github.com/AlexxIT/go2rtc/releases/latest/download/go2rtc_mac_amd64.zip)         | macOS 11+ Intel 64-bit                                                                                                                    |
+| [go2rtc_mac_amd64.zip](https://github.com/AlexxIT/go2rtc/releases/latest/download/go2rtc_mac_amd64.zip)         | macOS 12+ Intel 64-bit                                                                                                                    |
 | [go2rtc_mac_arm64.zip](https://github.com/AlexxIT/go2rtc/releases/latest/download/go2rtc_mac_arm64.zip)         | macOS ARM 64-bit                                                                                                                          |
 | [go2rtc_freebsd_amd64.zip](https://github.com/AlexxIT/go2rtc/releases/latest/download/go2rtc_freebsd_amd64.zip) | FreeBSD 64-bit                                                                                                                            |
 | [go2rtc_freebsd_arm64.zip](https://github.com/AlexxIT/go2rtc/releases/latest/download/go2rtc_freebsd_arm64.zip) | FreeBSD ARM 64-bit                                                                                                                        |
@@ -496,6 +496,7 @@ PS. Additionally, WebRTC will try to use the 8555 UDP port to transmit encrypted
 
 - [Home Assistant](https://www.home-assistant.io/) [2024.11+](https://www.home-assistant.io/integrations/go2rtc/) - top open-source smart home project
 - [Frigate](https://frigate.video/) [0.12+](https://docs.frigate.video/guides/configuring_go2rtc/) - open-source NVR built around real-time AI object detection
+- [camera.ui](https://www.cameraui.com/) - The modern, local-first platform for professional video surveillance.
 - [Advanced Camera Card](https://github.com/dermotduffy/advanced-camera-card) - custom card for Home Assistant
 - [OpenIPC](https://github.com/OpenIPC/firmware/tree/master/general/package/go2rtc) - alternative IP camera firmware from an open community
 - [wz_mini_hacks](https://github.com/gtxaspec/wz_mini_hacks) - custom firmware for Wyze cameras
