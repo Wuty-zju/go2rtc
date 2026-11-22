@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"sync"
 
@@ -29,10 +30,25 @@ func Init() {
 
 	log = app.GetLogger("xiaomi")
 
+	lenses := lensSources(streams.GetAllSources())
 	streams.HandleFunc("xiaomi", func(rawURL string) (core.Producer, error) {
 		u, err := url.Parse(rawURL)
 		if err != nil {
 			return nil, err
+		}
+
+		if src, ok := lenses[rawURL]; ok {
+			owner := streams.Get(src.owner)
+			if owner == nil || !slices.Contains(owner.Sources(), src.primary) {
+				return nil, errReuse
+			}
+			return src.pair.Open(src.secondary, func() (string, error) {
+				primary, _ := url.Parse(src.primary)
+				return getCameraURL(primary)
+			})
+		}
+		if u.Query().Has("reuse") {
+			return nil, errReuse
 		}
 
 		if u.User != nil {
