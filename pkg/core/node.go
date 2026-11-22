@@ -27,9 +27,10 @@ type Node struct {
 	Input  HandlerFunc
 	Output HandlerFunc
 
-	id     uint32
-	childs []*Node
-	parent *Node
+	id       uint32
+	childs   []*Node
+	parent   *Node
+	keyframe func()
 
 	mu sync.Mutex
 }
@@ -116,4 +117,28 @@ func MoveNode(dst, src *Node) {
 	}
 	dst.childs = merged
 	dst.mu.Unlock()
+}
+
+// OnKeyframe sets the handler that asks the source of this node for a keyframe.
+// The handler is called from RequestKeyframe and must not block.
+func (n *Node) OnKeyframe(handler func()) {
+	n.mu.Lock()
+	n.keyframe = handler
+	n.mu.Unlock()
+}
+
+// RequestKeyframe calls the keyframe handler of this node or of the nearest
+// parent that has one. Without a handler it does nothing.
+func (n *Node) RequestKeyframe() {
+	for n != nil {
+		n.mu.Lock()
+		handler, parent := n.keyframe, n.parent
+		n.mu.Unlock()
+
+		if handler != nil {
+			handler()
+			return
+		}
+		n = parent
+	}
 }

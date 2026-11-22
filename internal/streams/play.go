@@ -4,7 +4,6 @@ import (
 	"errors"
 	"slices"
 	"time"
-	"weak"
 
 	"github.com/AlexxIT/go2rtc/pkg/core"
 )
@@ -119,24 +118,38 @@ func (s *Stream) AddInternalProducer(conn core.Producer) {
 
 func (s *Stream) AddInternalConsumer(conn core.Consumer) {
 	s.mu.Lock()
-	s.consumers = append(s.consumers, streamConsumer{Consumer: conn})
+	s.consumers = append(s.consumers, &streamConsumer{Consumer: conn})
 	s.mu.Unlock()
 }
 
 func (s *Stream) RemoveInternalConsumer(conn core.Consumer) {
-	var backchannels []weak.Pointer[backchannel]
+	s.removeConsumer(conn, false)
+}
+
+func (s *Stream) removeConsumer(conn core.Consumer, stop bool) {
+	var registered *streamConsumer
 	s.mu.Lock()
-	for i, consumer := range s.consumers {
-		if consumer.Consumer == conn {
-			backchannels = consumer.backchannels
+	for i, c := range s.consumers {
+		if c.Consumer == conn {
+			registered = c
 			s.consumers = slices.Delete(s.consumers, i, i+1)
 			break
 		}
 	}
 	s.mu.Unlock()
-	for _, ref := range backchannels {
-		if back := ref.Value(); back != nil {
-			back.remove()
+	if registered != nil {
+		registered.mu.Lock()
+		defer registered.mu.Unlock()
+		registered.removed = true
+	}
+	if stop {
+		_ = conn.Stop()
+	}
+	if registered != nil {
+		for _, ref := range registered.backchannels {
+			if back := ref.Value(); back != nil {
+				back.remove()
+			}
 		}
 	}
 }

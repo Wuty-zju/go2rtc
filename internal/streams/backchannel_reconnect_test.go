@@ -253,3 +253,33 @@ func TestDepartedBackchannelWithReusedInput(t *testing.T) {
 		t.Fatal("replacement lost the surviving consumer's input")
 	}
 }
+
+func TestRenegotiatedBackchannelOwnership(t *testing.T) {
+	video := reconnectMedia("video", core.CodecH264)
+	speaker := reconnectMedia("speaker", core.CodecOpus)
+	speaker.Direction = core.DirectionSendonly
+	camera := &previewEndpoint{newReconnectProducer(video, speaker)}
+	p := &Producer{conn: camera, state: stateMedias, url: "test:camera"}
+	stream := &Stream{producers: []*Producer{p}}
+	watch := video.Clone()
+	watch.Direction = core.DirectionSendonly
+	viewer := &previewEndpoint{newReconnectProducer(watch)}
+	if err := stream.AddConsumer(viewer); err != nil {
+		t.Fatal(err)
+	}
+	mic := speaker.Clone()
+	mic.Direction = core.DirectionRecvonly
+	if err := stream.AddConsumerMedias(viewer, []*core.Media{mic}); err != nil {
+		t.Fatal(err)
+	}
+	if len(stream.consumers) != 1 || len(p.senders) != 1 {
+		t.Fatal("renegotiation did not reuse the registered consumer")
+	}
+	stream.RemoveConsumer(viewer)
+	if len(p.senders) != 0 {
+		t.Fatal("renegotiated input survived removal")
+	}
+	if err := stream.AddConsumerMedias(viewer, []*core.Media{mic}); err == nil {
+		t.Fatal("removed consumer was reattached")
+	}
+}

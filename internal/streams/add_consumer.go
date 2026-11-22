@@ -9,16 +9,42 @@ import (
 )
 
 func (s *Stream) AddConsumer(cons core.Consumer) (err error) {
+	return s.addConsumer(cons, cons.GetMedias(), nil)
+}
+
+// AddConsumerMedias - match new medias of already added consumer.
+// For example, after WebRTC renegotiation (enable two-way audio).
+func (s *Stream) AddConsumerMedias(cons core.Consumer, medias []*core.Media) (err error) {
+	s.mu.Lock()
+	var registered *streamConsumer
+	for _, c := range s.consumers {
+		if c.Consumer == cons {
+			registered = c
+			break
+		}
+	}
+	s.mu.Unlock()
+	if registered == nil {
+		return errors.New("streams: consumer already removed")
+	}
+	registered.mu.Lock()
+	defer registered.mu.Unlock()
+	if registered.removed {
+		return errors.New("streams: consumer already removed")
+	}
+	return s.addConsumer(cons, medias, registered)
+}
+
+func (s *Stream) addConsumer(cons core.Consumer, consMedias []*core.Media, registered *streamConsumer) (err error) {
 	// support for multiple simultaneous pending from different consumers
 	consN := s.pending.Add(1) - 1
 
 	var prodErrors = make([]error, len(s.producers))
 	var prodMedias []*core.Media
 	var prodStarts []*Producer
-	consumer := streamConsumer{Consumer: cons}
+	consumer := &streamConsumer{Consumer: cons}
 
 	// Step 1. Get consumer medias
-	consMedias := cons.GetMedias()
 	for _, consMedia := range consMedias {
 		log.Trace().Msgf("[streams] check cons=%d media=%s", consN, consMedia)
 
@@ -106,9 +132,13 @@ func (s *Stream) AddConsumer(cons core.Consumer) (err error) {
 		return formatError(consMedias, prodMedias, prodErrors)
 	}
 
-	s.mu.Lock()
-	s.consumers = append(s.consumers, consumer)
-	s.mu.Unlock()
+	if registered == nil {
+		s.mu.Lock()
+		s.consumers = append(s.consumers, consumer)
+		s.mu.Unlock()
+	} else {
+		registered.backchannels = append(registered.backchannels, consumer.backchannels...)
+	}
 
 	// there may be duplicates, but that's not a problem
 	for _, prod := range prodStarts {

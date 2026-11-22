@@ -11,7 +11,7 @@ import (
 
 type Stream struct {
 	producers []*Producer
-	consumers []streamConsumer
+	consumers []*streamConsumer
 	mu        sync.Mutex
 	pending   atomic.Int32
 }
@@ -21,9 +21,11 @@ type streamConsumer struct {
 	// A producer may already have stopped or discarded the registration on
 	// reconnect while this consumer remains subscribed to other tracks.
 	backchannels []weak.Pointer[backchannel]
+	mu           sync.Mutex // serialize late media negotiation with removal of this consumer
+	removed      bool
 }
 
-func (c streamConsumer) MarshalJSON() ([]byte, error) {
+func (c *streamConsumer) MarshalJSON() ([]byte, error) {
 	return json.Marshal(c.Consumer)
 }
 
@@ -74,9 +76,7 @@ func (s *Stream) SetSource(source string) {
 }
 
 func (s *Stream) RemoveConsumer(cons core.Consumer) {
-	_ = cons.Stop()
-
-	s.RemoveInternalConsumer(cons)
+	s.removeConsumer(cons, true)
 	s.stopProducers()
 }
 
@@ -116,8 +116,8 @@ func (s *Stream) stopProducers() {
 
 func (s *Stream) MarshalJSON() ([]byte, error) {
 	var info = struct {
-		Producers []*Producer      `json:"producers"`
-		Consumers []streamConsumer `json:"consumers"`
+		Producers []*Producer       `json:"producers"`
+		Consumers []*streamConsumer `json:"consumers"`
 	}{
 		Producers: s.producers,
 		Consumers: s.consumers,
