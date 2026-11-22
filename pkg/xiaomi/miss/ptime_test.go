@@ -19,6 +19,7 @@ type opusWire struct {
 	packets []*Packet
 }
 
+func (w *opusWire) Close() error                { return nil }
 func (w *opusWire) SetDeadline(time.Time) error { return nil }
 func (w *opusWire) ReadPacket() ([]byte, []byte, error) {
 	if len(w.packets) == 0 {
