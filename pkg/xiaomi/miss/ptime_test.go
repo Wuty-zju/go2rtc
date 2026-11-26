@@ -113,3 +113,33 @@ func TestPtimeAllowsFirmwareWithoutSequenceNumbers(t *testing.T) {
 		t.Fatal("sequence metadata suppressed valid coded frames", err, count)
 	}
 }
+
+func TestPtimeOnBothLensOutputs(t *testing.T) {
+	wire := &opusWire{packets: []*Packet{{CodecID: codecOPUS, Payload: []byte{0xb9, 1, 2}}}}
+	client := &Client{Conn: wire, key: make([]byte, 32)}
+	video := &core.Media{Kind: core.KindVideo, Direction: core.DirectionRecvonly, Codecs: []*core.Codec{{Name: core.CodecH265}}}
+	mic := &core.Media{Kind: core.KindAudio, Direction: core.DirectionRecvonly, Codecs: []*core.Codec{{Name: core.CodecOpus, ClockRate: 48000}}}
+	p := &Producer{Connection: core.Connection{Medias: []*core.Media{video, video.Clone(), mic}}, client: client, opus20: true}
+	var pair LensPair
+	var output [2][]*core.Packet
+	for i := range 2 {
+		v, err := pair.open(i, func() (*Producer, error) { return p, nil })
+		if err != nil {
+			t.Fatal(err)
+		}
+		r, err := v.GetTrack(mic, mic.Codecs[0])
+		if err != nil {
+			t.Fatal(err)
+		}
+		r.Input = func(packet *core.Packet) { output[i] = append(output[i], packet) }
+		v.state.Store(lensWaitKey)
+	}
+	if err := p.Start(); !errors.Is(err, io.EOF) {
+		t.Fatal(err)
+	}
+	for _, packets := range output {
+		if len(packets) != 2 || packets[1].Timestamp-packets[0].Timestamp != 960 || packets[0].Payload[1] != 1 || packets[1].Payload[1] != 2 {
+			t.Fatal("both original frames must reach each lens on the 20 ms clock", packets)
+		}
+	}
+}

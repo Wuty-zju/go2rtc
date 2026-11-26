@@ -174,7 +174,10 @@ func (c *Client) StartMedia(channel, quality, audio string) error {
 	if channel == "all" && c.model != "xiaomi.camera.082ac1" {
 		return fmt.Errorf("miss: dual-lens streaming is not verified for %s", c.model)
 	}
+	return c.startMedia(channel, quality, audio, channel == "all")
+}
 
+func (c *Client) startMedia(channel, quality, audio string, dual bool) error {
 	switch c.model {
 	case ModelDafang, ModelXiaofang:
 		var q, a byte
@@ -214,11 +217,11 @@ func (c *Client) StartMedia(channel, quality, audio string) error {
 	}
 
 	data := binary.BigEndian.AppendUint32(nil, cmdVideoStart)
-	switch channel {
-	case "", "0":
-		data = fmt.Appendf(data, `{"videoquality":%s,"enableaudio":%s}`, quality, audio)
-	case "all":
+	switch {
+	case dual:
 		data = fmt.Appendf(data, `{"videoquality":%s,"videoquality2":%s,"enableaudio":%s}`, quality, quality, audio)
+	case channel == "" || channel == "0":
+		data = fmt.Appendf(data, `{"videoquality":%s,"enableaudio":%s}`, quality, audio)
 	default:
 		data = fmt.Appendf(data, `{"videoquality":-1,"videoquality2":%s,"enableaudio":%s}`, quality, audio)
 	}

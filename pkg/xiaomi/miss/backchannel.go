@@ -11,16 +11,20 @@ import (
 	"github.com/pion/rtp"
 )
 
-func (p *Producer) AddTrack(media *core.Media, _ *core.Codec, track *core.Receiver) error {
-	p.speakerMu.Lock()
-	defer p.speakerMu.Unlock()
-	if p.stopped.Load() {
+func (v *Producer) AddTrack(media *core.Media, _ *core.Codec, track *core.Receiver) error {
+	v.speakerMu.Lock()
+	defer v.speakerMu.Unlock()
+	p := v
+	if v.speakerOwner != nil {
+		p = v.speakerOwner
+	}
+	if v.stopped.Load() || p.stopped.Load() {
 		return fmt.Errorf("miss: producer is stopped")
 	}
 	if track.Codec.Name != core.CodecPCMA && track.Codec.Name != core.CodecOpus {
 		return fmt.Errorf("miss: unsupported speaker codec %s", track.Codec.Name)
 	}
-	p.Senders = slices.DeleteFunc(p.Senders, func(sender *core.Sender) bool { return sender.State() == "closed" })
+	v.Senders = slices.DeleteFunc(v.Senders, func(sender *core.Sender) bool { return sender.State() == "closed" })
 
 	sender := core.NewSender(media, track.Codec)
 
@@ -30,7 +34,7 @@ func (p *Producer) AddTrack(media *core.Media, _ *core.Codec, track *core.Receiv
 			_ = p.client.Conn.Close() // Wake the media reader and reconnect.
 			return
 		}
-		p.Send += len(payload)
+		v.Send += len(payload)
 	}
 	switch track.Codec.Name {
 	case core.CodecPCMA:
@@ -79,7 +83,7 @@ func (p *Producer) AddTrack(media *core.Media, _ *core.Codec, track *core.Receiv
 	sender.Handler = func(packet *rtp.Packet) {
 		p.speakerMu.Lock()
 		defer p.speakerMu.Unlock()
-		if p.stopped.Load() || len(packet.Payload) == 0 {
+		if v.stopped.Load() || p.stopped.Load() || len(packet.Payload) == 0 {
 			return
 		}
 		idle := time.Since(p.speakerTime) >= time.Second
@@ -107,7 +111,7 @@ func (p *Producer) AddTrack(media *core.Media, _ *core.Codec, track *core.Receiv
 	}
 
 	sender.HandleRTP(track)
-	p.Senders = append(p.Senders, sender)
+	v.Senders = append(v.Senders, sender)
 	return nil
 }
 

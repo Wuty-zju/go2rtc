@@ -29,21 +29,8 @@ func Init() {
 	tokens = v.Cfg
 
 	log = app.GetLogger("xiaomi")
-	declarations := streams.GetAllSources()
-
+	lenses := lensSources(streams.GetAllSources())
 	streams.HandleFunc("xiaomi", func(rawURL string) (core.Producer, error) {
-		reuse, err := planReuse(rawURL, declarations)
-		if err != nil {
-			return nil, err
-		}
-		location, err := resolveReuse(rawURL, reuse, streams.GetAllSources())
-		if err != nil {
-			return nil, err
-		}
-		if location.stream != "" {
-			return newReuseProducer(location.stream)
-		}
-		rawURL = location.url
 		u, err := url.Parse(rawURL)
 		if err != nil {
 			return nil, err
@@ -53,6 +40,22 @@ func Init() {
 		}
 		if u.Query().Has("ptime") && xiaomi.IsLegacy(u.Query().Get("model")) {
 			return nil, errors.New("xiaomi: ptime requires a MISS camera")
+		}
+
+		if src, ok := lenses[rawURL]; ok {
+			if streams.Get(src.owner) == nil {
+				return nil, errReuse
+			}
+			return src.pair.Open(src.secondary, func() (string, error) {
+				primary, _ := url.Parse(src.primary)
+				if err := miss.ValidatePtime(primary.Query()); err != nil {
+					return "", err
+				}
+				return getCameraURL(primary)
+			})
+		}
+		if u.Query().Has("reuse") {
+			return nil, errReuse
 		}
 
 		if u.User != nil {

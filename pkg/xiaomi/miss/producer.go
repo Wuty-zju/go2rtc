@@ -20,6 +20,8 @@ type Producer struct {
 	core.Connection
 	client       *Client
 	dual         bool
+	lenses       *lensOutputs
+	speakerOwner *Producer
 	opus20       bool
 	speakerMu    sync.Mutex
 	speaker      *core.Sender
@@ -29,6 +31,14 @@ type Producer struct {
 }
 
 func Dial(rawURL string) (core.Producer, error) {
+	p, err := dial(rawURL, false)
+	if err != nil {
+		return nil, err
+	}
+	return p, nil
+}
+
+func dial(rawURL string, paired bool) (*Producer, error) {
 	u, err := url.Parse(rawURL)
 	if err != nil {
 		return nil, err
@@ -37,7 +47,7 @@ func Dial(rawURL string) (core.Producer, error) {
 	if err = ValidatePtime(query); err != nil {
 		return nil, err
 	}
-	dual := query.Get("channel") == "all"
+	dual := paired || query.Get("channel") == "all"
 	if dual && query.Get("model") != "xiaomi.camera.082ac1" {
 		return nil, fmt.Errorf("miss: dual-lens streaming is not verified for %s", query.Get("model"))
 	}
@@ -47,7 +57,7 @@ func Dial(rawURL string) (core.Producer, error) {
 		return nil, err
 	}
 
-	err = client.StartMedia(query.Get("channel"), query.Get("subtype"), query.Get("audio"))
+	err = client.startMedia(query.Get("channel"), query.Get("subtype"), query.Get("audio"), dual)
 	if err != nil {
 		_ = client.Close()
 		return nil, err
@@ -77,7 +87,7 @@ func Dial(rawURL string) (core.Producer, error) {
 		dual:   dual,
 		opus20: query.Has("ptime"),
 	}
-	if dual {
+	if dual && !paired {
 		// Consumers can select another lens after the packet reader has started.
 		// Prepare all receiver identities before that reader accesses the list.
 		for _, media := range medias {
@@ -126,7 +136,7 @@ func probe(client *Client, audio bool, videoCount int, opus20 bool) ([]*core.Med
 		case codecH264:
 			if vcodecs[channel] == nil {
 				buf := annexb.EncodeToAVCC(pkt.Payload)
-				if h264.NALUType(buf) == h264.NALUTypeSPS {
+				if len(buf) > 4 && h264.NALUType(buf) == h264.NALUTypeSPS {
 					vcodecs[channel] = h264.AVCCToCodec(buf)
 					videos++
 				}
@@ -134,7 +144,7 @@ func probe(client *Client, audio bool, videoCount int, opus20 bool) ([]*core.Med
 		case codecH265:
 			if vcodecs[channel] == nil {
 				buf := annexb.EncodeToAVCC(pkt.Payload)
-				if h265.NALUType(buf) == h265.NALUTypeVPS {
+				if len(buf) > 4 && h265.NALUType(buf) == h265.NALUTypeVPS {
 					vcodecs[channel] = h265.AVCCToCodec(buf)
 					videos++
 				}
@@ -234,8 +244,14 @@ func (p *Producer) Start() error {
 
 		switch pkt.CodecID {
 		case codecH264, codecH265:
+			if p.lenses != nil && p.lenses[pkt.videoChannel()].Load() == nil {
+				continue
+			}
 			payload := annexb.EncodeToAVCC(pkt.Payload)
-			if p.dual {
+			if len(payload) <= 4 {
+				continue
+			}
+			if p.dual && p.lenses == nil {
 				channel := pkt.videoChannel()
 				videoCodec = p.Medias[channel].Codecs[0]
 				if !ready[channel] {
@@ -317,21 +333,29 @@ func (p *Producer) Start() error {
 			}
 		}
 
-		for _, recv := range p.Receivers {
-			if recv.Codec.Name == name && (videoCodec == nil || recv.Codec == videoCodec) {
-				if audioFrames == nil {
-					recv.WriteRTP(pkt2)
-				} else {
-					for i, payload := range audioFrames {
-						clone := *pkt2
-						clone.Payload = payload
-						clone.Timestamp += uint32(i) * 960
-						clone.SequenceNumber += uint16(i)
-						recv.WriteRTP(&clone)
-					}
-				}
-				break
-			}
+		if audioFrames == nil {
+			p.writeFrame(pkt, name, videoCodec, pkt2)
+			continue
+		}
+		for i, payload := range audioFrames {
+			frame := *pkt2
+			frame.Payload = payload
+			frame.Timestamp += uint32(i) * 960
+			frame.SequenceNumber += uint16(i)
+			p.writeFrame(pkt, name, nil, &frame)
+		}
+	}
+}
+
+func (p *Producer) writeFrame(pkt *Packet, name string, video *core.Codec, frame *core.Packet) {
+	if p.lenses != nil {
+		p.lenses.write(pkt, name, frame)
+		return
+	}
+	for _, recv := range p.Receivers {
+		if recv.Codec.Name == name && (video == nil || recv.Codec == video) {
+			recv.WriteRTP(frame)
+			return
 		}
 	}
 }
