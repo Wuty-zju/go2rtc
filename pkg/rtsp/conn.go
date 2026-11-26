@@ -25,7 +25,8 @@ type Conn struct {
 	// public
 
 	Backchannel bool
-	Keyframe    string // KeyframeResetup: video tracks request keyframes with RequestKeyframe
+	Keepalive   int    // keepalive interval in seconds, 0 - auto, -1 - disabled
+	Keyframe    string // how video tracks request keyframes
 	Media       string
 	OnClose     func() error
 	PacketSize  uint16
@@ -57,6 +58,9 @@ type Conn struct {
 	udpAddr []*net.UDPAddr
 
 	keyframeNext atomic.Int64 // earliest time of the next RequestKeyframe
+	keyframeChan atomic.Uint32
+	keyframeSSRC atomic.Uint32
+	firSeq       atomic.Uint32
 }
 
 const (
@@ -101,15 +105,22 @@ func (c *Conn) Handle() (err error) {
 	case core.ModeActiveProducer:
 		var keepaliveDT time.Duration
 
-		if c.keepalive > 5 {
+		switch {
+		case c.Keepalive > 0:
+			keepaliveDT = time.Duration(c.Keepalive) * time.Second
+		case c.Keepalive < 0:
+			// disabled: some servers break when they get a request while streaming
+		case c.keepalive > 5:
 			keepaliveDT = time.Duration(c.keepalive-5) * time.Second
-		} else {
+		default:
 			keepaliveDT = 25 * time.Second
 		}
 
-		ctx, cancel := context.WithCancel(context.Background())
-		go c.handleKeepalive(ctx, keepaliveDT)
-		defer cancel()
+		if keepaliveDT > 0 {
+			ctx, cancel := context.WithCancel(context.Background())
+			go c.handleKeepalive(ctx, keepaliveDT)
+			defer cancel()
+		}
 
 		if c.Timeout == 0 {
 			// polling frames from remote RTSP Server (ex Camera)
@@ -298,6 +309,9 @@ func (c *Conn) handleRawPacket(channel byte, buf []byte) error {
 		if err := packet.Unmarshal(buf); err != nil {
 			return err
 		}
+		if c.keyframeChan.Load() == uint32(channel) {
+			c.keyframeSSRC.Store(packet.SSRC)
+		}
 
 		for _, receiver := range c.Receivers {
 			if receiver.ID == channel {
@@ -342,6 +356,12 @@ func (c *Conn) WriteRequest(req *tcp.Request) error {
 
 	if c.session != "" {
 		req.Header.Set("Session", c.session)
+	}
+
+	// ONVIF Streaming Specification 5.3.1 requires the backchannel tag in
+	// requests that use this feature.
+	if c.Backchannel {
+		req.Header.Set("Require", "www.onvif.org/ver20/backchannel")
 	}
 
 	if req.Body != nil {

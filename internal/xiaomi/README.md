@@ -74,5 +74,6 @@ streams:
   bullet: xiaomi://1234567890:cn@192.168.1.123?did=9876543210&model=xiaomi.camera.082ac1&channel=2&reuse=dome
 ```
 
-The pair is bound to these URLs at startup. Restart go2rtc after editing either
-URL. Set options such as `subtype` and `audio` on the primary. Options repeated on the second URL must match.
+Configure one stream name per lens. Multiple clients can subscribe to either
+name. Set options such as `subtype` and `audio` on the primary. Options repeated
+on the secondary must match. Restart go2rtc after editing the paired URLs.

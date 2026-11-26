@@ -19,9 +19,11 @@ func TestLensSources(t *testing.T) {
 		list(primary, "xiaomi://other:cn@camera?did=123&model=xiaomi.camera.082ac1&channel=2&reuse=main"),
 		list("xiaomi://user:cn@camera?did=123&model=single", "xiaomi://user:cn@camera?did=123&model=single&channel=2&reuse=main"),
 		{"main": {primary}, "alias": {primary}, "second": {second}},
+		{"main": {primary}, "second": {second}, "alias": {second}},
+		{"main": {primary + "&audio=1"}, "second": {second}, "alias": {second + "&audio=1"}},
 	} {
 		if len(lensSources(v)) != 0 {
-			t.Fatal("invalid pair accepted")
+			t.Fatalf("invalid pair accepted: %v", v)
 		}
 	}
 }

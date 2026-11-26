@@ -19,7 +19,11 @@ type Producer struct {
 }
 
 func Dial(rawURL string) (core.Producer, error) {
-	return dial(rawURL, false)
+	p, err := dial(rawURL, false)
+	if err != nil {
+		return nil, err
+	}
+	return p, nil
 }
 
 func dial(rawURL string, dual bool) (*Producer, error) {

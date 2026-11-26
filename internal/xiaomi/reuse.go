@@ -19,17 +19,17 @@ type lensSource struct {
 }
 
 func lensSources(streams map[string][]string) map[string]lensSource {
-	sources := make(map[string]lensSource)
+	type urls struct{ primary, secondary string }
+	pairs := make(map[string][]urls)
 	counts := make(map[string]int)
-	for _, list := range streams {
-		for _, raw := range list {
-			counts[raw]++
-		}
-	}
 	for name, list := range streams {
 		for _, raw := range list {
+			if !strings.HasPrefix(raw, "xiaomi:") {
+				continue
+			}
+			counts[raw]++
 			u, err := url.Parse(raw)
-			if err != nil || u.Scheme != "xiaomi" {
+			if err != nil {
 				continue
 			}
 			q, err := url.ParseQuery(u.RawQuery)
@@ -37,50 +37,56 @@ func lensSources(streams map[string][]string) map[string]lensSource {
 			if err != nil || owner == "" || owner == name || len(q["reuse"]) != 1 || len(q["channel"]) != 1 || q.Get("channel") != "2" {
 				continue
 			}
-			var primary string
-			for _, candidate := range streams[owner] {
-				if strings.HasPrefix(candidate, "xiaomi:") {
-					if primary != "" {
-						primary = ""
-						break
-					}
-					primary = candidate
-				}
+			primary := matchingPrimary(streams[owner], u, q)
+			if primary != "" {
+				pairs[owner] = append(pairs[owner], urls{primary, raw})
 			}
-			if counts[primary] != 1 {
-				continue
-			}
-			p, err := url.Parse(primary)
-			if err != nil || p.User == nil || u.User == nil || p.User.String() != u.User.String() || p.Host != u.Host {
-				continue
-			}
-			pq, err := url.ParseQuery(p.RawQuery)
-			if err != nil || pq.Has("reuse") || (pq.Get("channel") != "" && pq.Get("channel") != "0") || q.Get("did") == "" || q.Get("model") != "xiaomi.camera.082ac1" {
-				continue
-			}
-			// Both lenses share the owner's media settings. A secondary may omit them.
-			delete(q, "reuse")
-			delete(q, "channel")
-			matches := true
-			for key, values := range q {
-				if !slices.Equal(values, pq[key]) {
-					matches = false
-					break
-				}
-			}
-			if !matches {
-				continue
-			}
-			entry, ok := sources[primary]
-			if !ok {
-				entry = lensSource{pair: new(miss.LensPair), primary: primary, owner: owner}
-				sources[primary] = entry
-			}
-			entry.secondary = true
-			sources[raw] = entry
 		}
+	}
+
+	sources := make(map[string]lensSource)
+	for owner, matches := range pairs {
+		// A lens has one named stream. That stream fans out to its consumers.
+		if len(matches) != 1 || counts[matches[0].primary] != 1 {
+			continue
+		}
+		p := matches[0]
+		src := lensSource{pair: new(miss.LensPair), primary: p.primary, owner: owner}
+		sources[p.primary] = src
+		src.secondary = true
+		sources[p.secondary] = src
 	}
 	return sources
 }
 
-var errReuse = errors.New("xiaomi: reuse requires a configured channel=2 source and a matching primary xiaomi.camera.082ac1 stream")
+func matchingPrimary(list []string, second *url.URL, q url.Values) string {
+	var raw string
+	for _, candidate := range list {
+		if strings.HasPrefix(candidate, "xiaomi:") {
+			if raw != "" {
+				return ""
+			}
+			raw = candidate
+		}
+	}
+	if raw == "" || q.Get("model") != "xiaomi.camera.082ac1" || q.Get("did") == "" {
+		return ""
+	}
+	p, err := url.Parse(raw)
+	if err != nil || p.User == nil || second.User == nil || p.User.String() != second.User.String() || p.Host != second.Host {
+		return ""
+	}
+	pq, err := url.ParseQuery(p.RawQuery)
+	if err != nil || pq.Has("reuse") || (pq.Get("channel") != "" && pq.Get("channel") != "0") {
+		return ""
+	}
+	// The secondary can omit the primary's media settings, or repeat them.
+	for k, vs := range q {
+		if k != "reuse" && k != "channel" && !slices.Equal(vs, pq[k]) {
+			return ""
+		}
+	}
+	return raw
+}
+
+var errReuse = errors.New("xiaomi: reuse requires one channel=2 stream and one matching primary xiaomi.camera.082ac1 stream")

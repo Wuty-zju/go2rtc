@@ -100,18 +100,12 @@ func (c *keyframeCamera) waitClosed(t *testing.T) {
 	}
 }
 
-// setTimeout sets the global Timeout, other tests of the package leave it very short
-func setTimeout(t *testing.T) {
-	old := Timeout
-	Timeout = 5 * time.Second
-	t.Cleanup(func() { Timeout = old })
-}
-
 func TestRequestKeyframe(t *testing.T) {
-	setTimeout(t)
+	setTimeout(t, 5*time.Second)
 	camera := newKeyframeCamera(t)
 
 	conn := NewClient(camera.uri)
+	conn.Keyframe = KeyframeReSETUP
 
 	// concurrent requests start only one helper session
 	var wg sync.WaitGroup
@@ -143,15 +137,15 @@ func TestRequestKeyframe(t *testing.T) {
 
 // GetTrack sets the keyframe handler only for video and only with the option
 func TestGetTrackKeyframe(t *testing.T) {
-	setTimeout(t)
+	setTimeout(t, 5*time.Second)
 
 	for _, tc := range []struct {
 		keyframe string
 		kind     string
 		helper   bool
 	}{
-		{KeyframeResetup, core.KindVideo, true},
-		{KeyframeResetup, core.KindAudio, false},
+		{KeyframeReSETUP, core.KindVideo, true},
+		{KeyframeReSETUP, core.KindAudio, false},
 		{"", core.KindVideo, false},
 	} {
 		camera := newKeyframeCamera(t)
@@ -188,13 +182,14 @@ func TestGetTrackKeyframe(t *testing.T) {
 }
 
 func TestRequestKeyframeError(t *testing.T) {
-	setTimeout(t)
+	setTimeout(t, 5*time.Second)
 	ln, err := net.Listen("tcp", "localhost:0")
 	require.Nil(t, err)
 	uri := "rtsp://" + ln.Addr().String() + "/stream"
 	require.Nil(t, ln.Close()) // connection refused
 
 	conn := NewClient(uri)
+	conn.Keyframe = KeyframeReSETUP
 
 	msg := make(chan any, 1)
 	conn.Listen(func(m any) { msg <- m })
@@ -221,6 +216,7 @@ func TestRequestKeyframeTimeout(t *testing.T) {
 	t.Cleanup(func() { _ = ln.Close() })
 
 	conn := NewClient("rtsp://" + ln.Addr().String() + "/stream")
+	conn.Keyframe = KeyframeReSETUP
 	conn.RequestKeyframe()
 
 	require.Eventually(t, func() bool { return conn.keyframeNext.Load() != math.MaxInt64 }, 2*time.Second, 5*time.Millisecond)
@@ -228,13 +224,14 @@ func TestRequestKeyframeTimeout(t *testing.T) {
 
 // the main session followed a redirect, the helper uses the final location
 func TestRequestKeyframeAfterRedirect(t *testing.T) {
-	setTimeout(t)
+	setTimeout(t, 5*time.Second)
 
 	target := newKeyframeCamera(t)
 	camera := newKeyframeCamera(t)
 	camera.redirect = target.uri
 
 	conn := NewClient(camera.uri)
+	conn.Keyframe = KeyframeReSETUP
 	require.Nil(t, conn.Dial())
 	require.Nil(t, conn.Describe()) // redirected to target
 	t.Cleanup(func() { _ = conn.conn.Close() })

@@ -1,6 +1,7 @@
 package miss
 
 import (
+	"errors"
 	"sync"
 	"sync/atomic"
 
@@ -17,7 +18,7 @@ type LensPair struct {
 
 type lensSession struct {
 	camera *Producer
-	refs   [2]int
+	opened [2]bool
 	start  sync.Once
 	done   chan struct{}
 	err    error
@@ -37,13 +38,17 @@ func (p *LensPair) Open(secondary bool, cameraURL func() (string, error)) (core.
 	if secondary {
 		channel = 1
 	}
-	return p.open(channel, func() (*Producer, error) {
+	v, err := p.open(channel, func() (*Producer, error) {
 		rawURL, err := cameraURL()
 		if err != nil {
 			return nil, err
 		}
 		return dial(rawURL, true)
 	})
+	if err != nil {
+		return nil, err
+	}
+	return v, nil
 }
 
 func (p *LensPair) open(channel int, connect func() (*Producer, error)) (*lens, error) {
@@ -71,11 +76,13 @@ func (p *LensPair) open(channel int, connect func() (*Producer, error)) (*lens, 
 			}
 		}
 		p.session = s
+	} else if s.opened[channel] {
+		return nil, errors.New("xiaomi: lens already in use; subscribe to its configured stream")
 	}
+	s.opened[channel] = true
 	out := s.camera.lenses[channel].Connection
 	out.ID, out.FormatName = core.NewID(), "xiaomi/miss"
 	out.Protocol, out.RemoteAddr, out.UserAgent = s.camera.Protocol, s.camera.RemoteAddr, s.camera.UserAgent
-	s.refs[channel]++
 	// Native AddTrack writes to the same camera. Each view owns its senders.
 	return &lens{Producer: &Producer{Connection: out, client: s.camera.client}, pair: p, session: s, channel: channel, done: make(chan struct{})}, nil
 }
@@ -143,11 +150,9 @@ func (v *lens) Stop() error {
 		sender.Close()
 	}
 	s := v.session
-	s.refs[v.channel]--
-	if s.refs[v.channel] == 0 {
-		s.camera.lenses[v.channel].state.Store(lensIdle)
-	}
-	if s.refs != [2]int{} {
+	s.opened[v.channel] = false
+	s.camera.lenses[v.channel].state.Store(lensIdle)
+	if s.opened[0] || s.opened[1] {
 		v.pair.mu.Unlock()
 		return nil
 	}

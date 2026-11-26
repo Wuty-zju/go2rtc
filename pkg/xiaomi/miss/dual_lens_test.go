@@ -20,7 +20,6 @@ type testFrame struct{ header, payload []byte }
 type testConn struct {
 	frames []testFrame
 	writes [][]byte
-	closed bool
 }
 
 func (c *testConn) Protocol() string                     { return "test" }
@@ -41,7 +40,18 @@ func (c *testConn) ReadPacket() ([]byte, []byte, error) {
 func (c *testConn) WritePacket(_, _ []byte) error { return nil }
 func (c *testConn) RemoteAddr() net.Addr          { return &net.UDPAddr{} }
 func (c *testConn) SetDeadline(time.Time) error   { return nil }
-func (c *testConn) Close() error                  { c.closed = true; return nil }
+func (c *testConn) Close() error                  { return nil }
+
+func TestDialErrorReturnsNilProducer(t *testing.T) {
+	if p, err := Dial("%"); err == nil || p != nil {
+		t.Errorf("Dial returned %T, %v", p, err)
+	}
+
+	var pair LensPair
+	if p, err := pair.Open(true, func() (string, error) { return "", io.EOF }); err != io.EOF || p != nil {
+		t.Fatalf("Open returned %T, %v", p, err)
+	}
+}
 
 func TestDualLensStartMedia(t *testing.T) {
 	for _, audio := range []string{"0", "1"} {
@@ -159,7 +169,6 @@ func TestDualLensProbeAndRouting(t *testing.T) {
 			}
 		})
 	}
-
 }
 
 func TestDualLensProbeRequiresBothLenses(t *testing.T) {
@@ -209,6 +218,9 @@ func TestLensPairLifecycle(t *testing.T) {
 		return v
 	}
 	second, first := open(1), open(0)
+	if _, err := pair.open(1, dial); err == nil {
+		t.Fatal("independent producers acquired the same lens")
+	}
 	if len(wires) != 1 || second.GetMedias()[0] == first.GetMedias()[0] || second.GetMedias()[1] != first.GetMedias()[1] || second.Receivers[1] == first.Receivers[1] {
 		t.Fatal("invalid lens or shared microphone identity")
 	}
