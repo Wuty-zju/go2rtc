@@ -274,3 +274,43 @@ func TestSpeakerTakeoverBeforeIdleTimerRuns(t *testing.T) {
 		t.Fatal("previous speaker audio reached the new input", err)
 	}
 }
+
+func TestPairedViewsShareSpeaker(t *testing.T) {
+	camera, wire := sharedSpeaker(t, 0)
+	video := &core.Media{Kind: core.KindVideo, Direction: core.DirectionRecvonly, Codecs: []*core.Codec{{Name: core.CodecH265}}}
+	speaker := &core.Media{Kind: core.KindAudio, Direction: core.DirectionSendonly, Codecs: []*core.Codec{{Name: core.CodecPCMA, ClockRate: 8000}}}
+	camera.Medias = []*core.Media{video, video.Clone(), speaker}
+	var pair LensPair
+	var views []*lens
+	for _, channel := range []int{1, 0} {
+		v, err := pair.open(channel, func() (*Producer, error) { return camera, nil })
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err = v.AddTrack(speaker, speaker.Codecs[0], core.NewReceiver(nil, speaker.Codecs[0])); err != nil {
+			t.Fatal(err)
+		}
+		views = append(views, v)
+		t.Cleanup(func() { _ = v.Stop() })
+	}
+	send := func(i int) {
+		views[i].Senders[0].Handler(&core.Packet{Payload: bytes.Repeat([]byte{byte(i + 1)}, 320)})
+	}
+	if wire.starts != 0 {
+		t.Fatal("preload acquired the speaker")
+	}
+	send(0)
+	send(1)
+	if wire.starts != 1 || len(wire.packets) != 1 {
+		t.Fatal("competing view used the physical speaker")
+	}
+	_ = views[0].Stop()
+	camera.speakerMu.Lock()
+	camera.speakerTime = time.Now().Add(-2 * time.Second)
+	camera.speakerMu.Unlock()
+	camera.stopSpeaker()
+	send(1)
+	if wire.starts != 2 || wire.stops != 1 || len(wire.packets) != 2 {
+		t.Fatal("remaining view did not reacquire the released speaker")
+	}
+}
