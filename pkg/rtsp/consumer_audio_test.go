@@ -26,7 +26,9 @@ func TestConsumersShareAudioPacket(t *testing.T) {
 	var workers sync.WaitGroup
 	for range 2 {
 		transport := &audioConn{}
-		conn := &Conn{conn: transport, state: StatePlay, playOK: true}
+		conn := &Conn{conn: transport}
+		conn.state.Store(StatePlay)
+		conn.playOK.Store(true)
 		write := conn.packetWriter(codec, 0, 96)
 		workers.Add(1)
 		go func() {
