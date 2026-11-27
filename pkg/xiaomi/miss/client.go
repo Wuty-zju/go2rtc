@@ -72,37 +72,13 @@ func NewClient(rawURL string) (*Client, error) {
 		return nil, err
 	}
 
-	return newClient(conn, key, model), nil
-}
-
-// After authentication the media reader does not consume control notifications.
-func newClient(conn Conn, key []byte, model string) *Client {
-	client := &Client{Conn: conn, key: key, model: model, commandsDone: make(chan struct{})}
-	go func() {
-		defer close(client.commandsDone)
-		for {
-			if _, _, err := conn.ReadCommand(); err != nil {
-				_ = conn.Close()
-				return
-			}
-		}
-	}()
-	return client
-}
-
-func (c *Client) Close() error {
-	err := c.Conn.Close()
-	if c.commandsDone != nil {
-		<-c.commandsDone
-	}
-	return err
+	return &Client{Conn: conn, key: key, model: model}, nil
 }
 
 type Client struct {
 	Conn
-	key          []byte
-	model        string
-	commandsDone chan struct{}
+	key   []byte
+	model string
 }
 
 const (
