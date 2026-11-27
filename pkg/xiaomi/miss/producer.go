@@ -212,14 +212,12 @@ func (p *Producer) Start() error {
 	opusSamples := uint32(timestamp40ms)
 	var sourceSeq uint32
 	var haveSourceSeq bool
-	if p.dual {
-		// A replacement producer feeds the existing consumers. Give its audio
-		// clock a local time origin instead of restarting their timeline at zero.
-		for _, media := range p.Medias {
-			if media.Kind == core.KindAudio && media.Direction == core.DirectionRecvonly {
-				audioTS = TimeToRTP(uint64(time.Now().UnixMilli()), uint64(media.Codecs[0].ClockRate))
-				break
-			}
+	// A replacement producer feeds the same RTP consumer. Give each session
+	// a time origin, then advance by the number of encoded audio samples.
+	for _, media := range p.Medias {
+		if media.Kind == core.KindAudio && media.Direction == core.DirectionRecvonly {
+			audioTS = TimeToRTP(uint64(time.Now().UnixMilli()), uint64(media.Codecs[0].ClockRate))
+			break
 		}
 	}
 	var ready [2]bool

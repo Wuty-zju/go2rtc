@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/AlexxIT/go2rtc/pkg/core"
@@ -142,4 +143,42 @@ func TestPtimeOnBothLensOutputs(t *testing.T) {
 			t.Fatal("both original frames must reach each lens on the 20 ms clock", packets)
 		}
 	}
+}
+
+// A continuing subscriber sees the replacement producer on the same RTP timeline.
+func TestOpusClockAfterProducerReplacement(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		for _, repack := range []bool{false, true} {
+			codec := &core.Codec{Name: core.CodecOpus, ClockRate: 48000, Channels: 2}
+			media := &core.Media{Kind: core.KindAudio, Direction: core.DirectionRecvonly, Codecs: []*core.Codec{codec}}
+			run := func() []uint32 {
+				wire := &opusWire{packets: []*Packet{
+					{CodecID: codecOPUS, Sequence: 4, Payload: []byte{0xb9, 1, 2}},
+					{CodecID: codecOPUS, Sequence: 5, Payload: []byte{0xb9, 3, 4}},
+				}}
+				p := &Producer{client: &Client{Conn: wire, key: make([]byte, 32)}, opus20: repack}
+				p.Medias = []*core.Media{media}
+				r, err := p.GetTrack(media, codec)
+				if err != nil {
+					t.Fatal(err)
+				}
+				var stamps []uint32
+				r.Input = func(packet *core.Packet) { stamps = append(stamps, packet.Timestamp) }
+				if err = p.Start(); !errors.Is(err, io.EOF) {
+					t.Fatal(err)
+				}
+				return stamps
+			}
+			first := run()
+			time.Sleep(4 * time.Second)
+			next := run()
+			size, step := 2, uint32(1920)
+			if repack {
+				size, step = 4, 960
+			}
+			if len(first) != size || len(next) != size || first[1]-first[0] != step || next[0]-first[0] != 4*48000 {
+				t.Fatalf("repack=%t: timestamps before and after replacement: %v / %v", repack, first, next)
+			}
+		}
+	})
 }

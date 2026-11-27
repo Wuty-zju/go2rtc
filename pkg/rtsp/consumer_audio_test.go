@@ -35,6 +35,9 @@ func TestConsumersShareAudioPacket(t *testing.T) {
 			for range 100 {
 				write(packet)
 			}
+			if conn.Send != 100*(intHdr+rtpHdr+len(packet.Payload)) {
+				t.Errorf("sent bytes: %d", conn.Send)
+			}
 			if len(transport.writes) != 100 || transport.writes[0][5]&0x80 == 0 {
 				t.Error("outgoing audio packets must carry the marker")
 			}
