@@ -27,7 +27,7 @@ func (c *Conn) AddTrack(media *core.Media, codec *core.Codec, track *core.Receiv
 		c.stateMu.Lock()
 		defer c.stateMu.Unlock()
 
-		if c.state == StatePlay {
+		if c.state.Load() == StatePlay {
 			// try a separate session first, so the running session is not interrupted
 			if err = c.addBackchannel(media, codec, track); err == nil {
 				return
@@ -43,7 +43,7 @@ func (c *Conn) AddTrack(media *core.Media, codec *core.Codec, track *core.Receiv
 			return
 		}
 
-		c.state = StateSetup
+		c.state.Store(StateSetup)
 
 	case core.ModePassiveConsumer:
 		channel = byte(len(c.Senders)) * 2
@@ -94,13 +94,17 @@ func (c *Conn) packetWriter(codec *core.Codec, channel, payloadType uint8) core.
 
 	flushBuf := func() {
 		//log.Printf("[rtsp] channel:%2d write_size:%6d buffer_size:%6d", channel, n, len(buf))
-		if err := c.writeInterleavedData(buf[:n]); err != nil {
+		if err := c.writeInterleavedData(buf[:n], true); err == nil {
 			c.Send += n
 		}
 		n = 0
 	}
 
 	handlerFunc := func(packet *rtp.Packet) {
+		if c.state.Load() == StateNone {
+			return
+		}
+
 		clone := rtp.Packet{
 			Header: rtp.Header{
 				Version:        2,
@@ -268,16 +272,16 @@ func rtpVideoStart(codec string, data []byte) (vcl, keyframe, valid bool) {
 	}
 }
 
-func (c *Conn) writeInterleavedData(data []byte) error {
+func (c *Conn) writeInterleavedData(data []byte, requirePlay bool) error {
 	c.stateMu.Lock()
-	if !c.playOK.Load() {
+	if requirePlay && !c.playOK.Load() {
 		c.stateMu.Unlock()
 		return io.ErrClosedPipe
 	}
 	conn, transport, udp, addresses := c.conn, c.Transport, c.udpConn, c.udpAddr
 	c.stateMu.Unlock()
 	if transport != "udp" {
-		_ = conn.SetWriteDeadline(time.Now().Add(Timeout))
+		_ = conn.SetWriteDeadline(time.Now().Add(core.ConnDeadline))
 		_, err := conn.Write(data)
 		return err
 	}
@@ -288,6 +292,9 @@ func (c *Conn) writeInterleavedData(data []byte) error {
 		rtpData := data[4 : 4+size]
 
 		if int(channel) >= len(udp) || int(channel) >= len(addresses) {
+			if !requirePlay {
+				return nil // the camera gave no RTCP port
+			}
 			return io.ErrClosedPipe
 		}
 		if _, err := udp[channel].WriteToUDP(rtpData, addresses[channel]); err != nil {

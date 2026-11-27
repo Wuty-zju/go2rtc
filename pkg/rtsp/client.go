@@ -18,8 +18,6 @@ import (
 	"github.com/AlexxIT/go2rtc/pkg/tcp"
 )
 
-var Timeout = time.Second * 5
-
 // maxRedirects is the number of 301/302 redirects followed in a row,
 // the same limit as net/http uses
 const maxRedirects = 10
@@ -73,7 +71,7 @@ func (c *Conn) Dial() (err error) {
 	c.session = ""
 	c.sequence = 0
 	c.playOK.Store(false)
-	c.state = StateConn
+	c.state.Store(StateConn)
 
 	c.udpConn = nil
 	c.udpAddr = nil
@@ -179,10 +177,6 @@ func (c *Conn) Describe() error {
 		Header: map[string][]string{
 			"Accept": {"application/sdp"},
 		},
-	}
-
-	if c.Backchannel {
-		req.Header.Set("Require", "www.onvif.org/ver20/backchannel")
 	}
 
 	if c.UserAgent != "" {
@@ -320,7 +314,7 @@ func (c *Conn) SetupMedia(media *core.Media) (byte, error) {
 	if err != nil {
 		// some Dahua/Amcrest cameras fail here because two simultaneous
 		// backchannel connections
-		if c.Backchannel {
+		if c.Backchannel && media.Direction != core.DirectionSendonly {
 			c.Backchannel = false
 			if err = c.Reconnect(); err != nil {
 				return 0, err

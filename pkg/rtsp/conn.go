@@ -26,7 +26,8 @@ type Conn struct {
 	// public
 
 	Backchannel bool
-	Keyframe    string // KeyframeResetup: video tracks request keyframes with RequestKeyframe
+	Keepalive   int    // keepalive interval in seconds, 0 - auto, -1 - disabled
+	Keyframe    string // how video tracks request keyframes
 	Media       string
 	OnClose     func() error
 	PacketSize  uint16
@@ -51,13 +52,16 @@ type Conn struct {
 	session     string
 	uri         string
 
-	state   State
+	state   atomic.Uint32
 	stateMu sync.Mutex
 
 	udpConn []*net.UDPConn
 	udpAddr []*net.UDPAddr
 
 	keyframeNext atomic.Int64 // earliest time of the next RequestKeyframe
+	keyframeChan atomic.Uint32
+	keyframeSSRC atomic.Uint32
+	firSeq       atomic.Uint32
 }
 
 const (
@@ -89,7 +93,7 @@ func (s State) String() string {
 }
 
 const (
-	StateNone State = iota
+	StateNone = iota
 	StateConn
 	StateSetup
 	StatePlay
@@ -97,30 +101,39 @@ const (
 
 func (c *Conn) Handle() (err error) {
 	c.stateMu.Lock()
-	if c.mode == core.ModeActiveProducer && c.state != StatePlay {
+	mode := c.mode
+	if mode == core.ModeActiveProducer && c.state.Load() != StatePlay {
 		c.stateMu.Unlock()
 		return nil
 	}
-	// Each playback loop owns its transport and track snapshot. Reconnect may
-	// replace these fields while the previous reader is returning from Close.
 	conn, reader := c.conn, c.reader
+	keepalive := c.keepalive
 	receivers := slices.Clone(c.Receivers)
-	udp := slices.Clone(c.udpConn)
+	udpConns := slices.Clone(c.udpConn)
+	c.stateMu.Unlock()
+
 	var timeout time.Duration
 
-	switch c.mode {
+	switch mode {
 	case core.ModeActiveProducer:
 		var keepaliveDT time.Duration
 
-		if c.keepalive > 5 {
-			keepaliveDT = time.Duration(c.keepalive-5) * time.Second
-		} else {
+		switch {
+		case c.Keepalive > 0:
+			keepaliveDT = time.Duration(c.Keepalive) * time.Second
+		case c.Keepalive < 0:
+			// disabled: some servers break when they get a request while streaming
+		case keepalive > 5:
+			keepaliveDT = time.Duration(keepalive-5) * time.Second
+		default:
 			keepaliveDT = 25 * time.Second
 		}
 
-		ctx, cancel := context.WithCancel(context.Background())
-		go c.handleKeepalive(ctx, conn, keepaliveDT)
-		defer cancel()
+		if keepaliveDT > 0 {
+			ctx, cancel := context.WithCancel(context.Background())
+			go c.handleKeepalive(ctx, conn, keepaliveDT)
+			defer cancel()
+		}
 
 		if c.Timeout == 0 {
 			// polling frames from remote RTSP Server (ex Camera)
@@ -148,20 +161,20 @@ func (c *Conn) Handle() (err error) {
 		timeout = time.Second * 60
 
 	default:
-		c.stateMu.Unlock()
-		return fmt.Errorf("wrong RTSP conn mode: %d", c.mode)
+		return fmt.Errorf("wrong RTSP conn mode: %d", mode)
 	}
 
-	c.stateMu.Unlock()
-	for i, socket := range udp {
-		go c.handleUDPData(socket, byte(i), receivers)
+	for i, udpConn := range udpConns {
+		go c.handleUDPData(udpConn, byte(i), receivers)
 	}
-	for {
+
+	for c.state.Load() != StateNone {
 		_ = conn.SetReadDeadline(time.Now().Add(timeout))
 		if err = c.handleTCPData(conn, reader, receivers); err != nil {
 			return
 		}
 	}
+	return nil
 }
 
 func (c *Conn) handleKeepalive(ctx context.Context, conn net.Conn, d time.Duration) {
@@ -225,7 +238,7 @@ func (c *Conn) handleTCPData(conn net.Conn, reader *bufio.Reader, receivers []*c
 		switch string(buf4) {
 		case "RTSP":
 			var res *tcp.Response
-			if res, err = tcp.ReadResponse(reader); err != nil {
+			if res, err = readResponse(conn, reader); err != nil {
 				return err
 			}
 			c.Fire(res)
@@ -238,6 +251,9 @@ func (c *Conn) handleTCPData(conn net.Conn, reader *bufio.Reader, receivers []*c
 			return nil
 
 		case "OPTI", "TEAR", "DESC", "SETU", "PLAY", "PAUS", "RECO", "ANNO", "GET_", "SET_":
+			if err = conn.SetReadDeadline(time.Now().Add(core.ConnDeadline)); err != nil {
+				return err
+			}
 			var req *tcp.Request
 			if req, err = tcp.ReadRequest(reader); err != nil {
 				return err
@@ -298,7 +314,7 @@ func (c *Conn) handleTCPData(conn net.Conn, reader *bufio.Reader, receivers []*c
 		// get data size
 		size = binary.BigEndian.Uint16(buf4[2:])
 
-		// skip 4 bytes from reader.Peek
+		// skip 4 bytes from Peek
 		if _, err = reader.Discard(4); err != nil {
 			return err
 		}
@@ -320,6 +336,9 @@ func (c *Conn) handleRawPacket(channel byte, buf []byte, receivers []*core.Recei
 		packet := &rtp.Packet{}
 		if err := packet.Unmarshal(buf); err != nil {
 			return err
+		}
+		if c.keyframeChan.Load() == uint32(channel) {
+			c.keyframeSSRC.Store(packet.SSRC)
 		}
 
 		for _, receiver := range receivers {
@@ -367,6 +386,12 @@ func (c *Conn) WriteRequest(req *tcp.Request) error {
 		req.Header.Set("Session", c.session)
 	}
 
+	// ONVIF Streaming Specification 5.3.1 requires the backchannel tag in
+	// requests that use this feature.
+	if c.Backchannel {
+		req.Header.Set("Require", "www.onvif.org/ver20/backchannel")
+	}
+
 	if req.Body != nil {
 		val := strconv.Itoa(len(req.Body))
 		req.Header.Set("Content-Length", val)
@@ -374,7 +399,7 @@ func (c *Conn) WriteRequest(req *tcp.Request) error {
 
 	c.Fire(req)
 
-	if err := c.conn.SetWriteDeadline(time.Now().Add(Timeout)); err != nil {
+	if err := c.conn.SetWriteDeadline(time.Now().Add(core.ConnDeadline)); err != nil {
 		return err
 	}
 
@@ -382,7 +407,7 @@ func (c *Conn) WriteRequest(req *tcp.Request) error {
 }
 
 func (c *Conn) ReadRequest() (*tcp.Request, error) {
-	if err := c.conn.SetReadDeadline(time.Now().Add(Timeout)); err != nil {
+	if err := c.conn.SetReadDeadline(time.Now().Add(core.ConnDeadline)); err != nil {
 		return nil, err
 	}
 	return tcp.ReadRequest(c.reader)
@@ -423,7 +448,7 @@ func (c *Conn) WriteResponse(res *tcp.Response) error {
 
 	c.Fire(res)
 
-	if err := c.conn.SetWriteDeadline(time.Now().Add(Timeout)); err != nil {
+	if err := c.conn.SetWriteDeadline(time.Now().Add(core.ConnDeadline)); err != nil {
 		return err
 	}
 
@@ -431,8 +456,12 @@ func (c *Conn) WriteResponse(res *tcp.Response) error {
 }
 
 func (c *Conn) ReadResponse() (*tcp.Response, error) {
-	if err := c.conn.SetReadDeadline(time.Now().Add(Timeout)); err != nil {
+	return readResponse(c.conn, c.reader)
+}
+
+func readResponse(conn net.Conn, reader *bufio.Reader) (*tcp.Response, error) {
+	if err := conn.SetReadDeadline(time.Now().Add(core.ConnDeadline)); err != nil {
 		return nil, err
 	}
-	return tcp.ReadResponse(c.reader)
+	return tcp.ReadResponse(reader)
 }

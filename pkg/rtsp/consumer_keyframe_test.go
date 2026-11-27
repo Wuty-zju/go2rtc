@@ -27,7 +27,8 @@ func TestConsumerWaitsForRTPKeyframe(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			makeWriter := func() (*keyframeConn, core.HandlerFunc) {
 				transport := &keyframeConn{}
-				conn := &Conn{conn: transport, state: StatePlay}
+				conn := &Conn{conn: transport}
+				conn.state.Store(StatePlay)
 				conn.playOK.Store(true)
 				return transport, conn.packetWriter(&core.Codec{Name: test.name, PayloadType: 96}, 0, 96)
 			}
@@ -105,7 +106,8 @@ func TestConsumerWaitsForKeyframe(t *testing.T) {
 			codec := &core.Codec{Name: test.name, PayloadType: core.PayloadTypeRAW}
 			makeWriter := func() (*keyframeConn, core.HandlerFunc) {
 				transport := &keyframeConn{}
-				conn := &Conn{conn: transport, state: StatePlay}
+				conn := &Conn{conn: transport}
+				conn.state.Store(StatePlay)
 				conn.playOK.Store(true)
 				return transport, conn.packetWriter(codec, 0, 96)
 			}

@@ -15,7 +15,8 @@ import (
 func TestStopWhileHandlingPackets(t *testing.T) {
 	for range 30 {
 		local, remote := net.Pipe()
-		conn := &Conn{conn: local, reader: bufio.NewReader(local), state: StatePlay, mode: core.ModePassiveProducer}
+		conn := &Conn{conn: local, reader: bufio.NewReader(local), mode: core.ModePassiveProducer}
+		conn.state.Store(StatePlay)
 		done := make(chan struct{})
 		go func() { _ = conn.Handle(); close(done) }()
 		// Exercise the next read-loop iteration while Stop changes the state.
@@ -48,7 +49,8 @@ func TestPlaybackKeepsItsReaderAcrossReconnect(t *testing.T) {
 	defer peer.Close()
 	old := &phasedRTCP{ready: make(chan struct{}), resume: make(chan struct{})}
 	trap := &unexpectedReader{}
-	c := &Conn{conn: local, reader: bufio.NewReader(old), state: StatePlay, mode: core.ModeActiveProducer}
+	c := &Conn{conn: local, reader: bufio.NewReader(old), mode: core.ModeActiveProducer}
+	c.state.Store(StatePlay)
 	done := make(chan error, 1)
 	go func() { done <- c.Handle() }()
 	select {
@@ -57,7 +59,8 @@ func TestPlaybackKeepsItsReaderAcrossReconnect(t *testing.T) {
 		t.Fatal("old playback did not start")
 	}
 	c.stateMu.Lock()
-	c.conn, c.reader, c.state = next, bufio.NewReader(trap), StateSetup
+	c.conn, c.reader = next, bufio.NewReader(trap)
+	c.state.Store(StateSetup)
 	c.stateMu.Unlock()
 	close(old.resume)
 	select {
@@ -102,7 +105,7 @@ func TestPacketWriteKeepsItsTransportAcrossReconnect(t *testing.T) {
 	c := &Conn{conn: old}
 	c.playOK.Store(true)
 	done := make(chan error, 1)
-	go func() { done <- c.writeInterleavedData([]byte{1}) }()
+	go func() { done <- c.writeInterleavedData([]byte{1}, true) }()
 	select {
 	case <-old.ready:
 	case <-time.After(time.Second):
@@ -119,7 +122,7 @@ func TestPacketWriteKeepsItsTransportAcrossReconnect(t *testing.T) {
 	if old.writes.Load() != 1 || next.writes.Load() != 0 {
 		t.Fatal("old audio entered the replacement RTSP handshake")
 	}
-	if err := c.writeInterleavedData([]byte{2}); err == nil || next.writes.Load() != 0 {
+	if err := c.writeInterleavedData([]byte{2}, true); err == nil || next.writes.Load() != 0 {
 		t.Fatal("packet sent before replacement PLAY response")
 	}
 }

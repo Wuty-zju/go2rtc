@@ -106,12 +106,6 @@ def binaries():
 def recipe():
     source = Path(os.environ['DOCKERFILE'])
     text = source.read_text()
-    marker = 'CGO_ENABLED=0 go build'
-    expected_arch_args = 2 if source.name == 'Dockerfile' else 1
-    if text.count(marker) != 1 or text.count('ARG TARGETARCH') != expected_arch_args:
-        raise SystemExit('Upstream recipe changed; review target mapping')
-    text = text.replace('ARG TARGETARCH', 'ARG TARGETARCH\nARG TARGETVARIANT', 1)
-    text = text.replace(marker, 'if [ "${TARGETARCH}" = "arm" ]; then export GOARM="${TARGETVARIANT#v}"; fi; ' + marker)
     if os.environ['VERSION']:
         if text.count('-ldflags "-s -w"') != 1:
             raise SystemExit('Unexpected linker flags in recipe')
