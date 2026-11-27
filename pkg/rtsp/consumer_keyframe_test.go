@@ -33,7 +33,9 @@ func TestConsumerWaitsForKeyframe(t *testing.T) {
 			codec := &core.Codec{Name: test.name, PayloadType: core.PayloadTypeRAW}
 			makeWriter := func() (*keyframeConn, core.HandlerFunc) {
 				transport := &keyframeConn{}
-				conn := &Conn{conn: transport, state: StatePlay, playOK: true}
+				conn := &Conn{conn: transport}
+				conn.state.Store(StatePlay)
+				conn.playOK.Store(true)
 				return transport, conn.packetWriter(codec, 0, 96)
 			}
 			send := func(writer core.HandlerFunc, nalu []byte) {
@@ -77,7 +79,9 @@ func TestConsumerPreservesParameterSetsBeforeKeyframe(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			transport := &keyframeConn{}
-			conn := &Conn{conn: transport, state: StatePlay, playOK: true}
+			conn := &Conn{conn: transport}
+			conn.state.Store(StatePlay)
+			conn.playOK.Store(true)
 			write := conn.packetWriter(&core.Codec{Name: test.name, PayloadType: core.PayloadTypeRAW}, 0, 96)
 			for _, nalu := range [][]byte{test.parameter, test.key} {
 				packet := &core.Packet{}

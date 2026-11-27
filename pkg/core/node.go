@@ -35,13 +35,6 @@ type Node struct {
 	mu sync.Mutex
 }
 
-// HasParent reports whether this node is still attached to an upstream source.
-func (n *Node) HasParent() bool {
-	n.mu.Lock()
-	defer n.mu.Unlock()
-	return n.parent != nil
-}
-
 func (n *Node) WithParent(parent *Node) *Node {
 	parent.AppendChild(n)
 	return n
@@ -136,7 +129,7 @@ func (n *Node) RequestKeyframe() {
 		n.mu.Unlock()
 
 		if handler != nil {
-			handler()
+			go handler()
 			return
 		}
 		n = parent
