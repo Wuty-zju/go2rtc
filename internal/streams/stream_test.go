@@ -3,6 +3,7 @@ package streams
 import (
 	"net/url"
 	"testing"
+	"time"
 
 	"github.com/AlexxIT/go2rtc/pkg/core"
 	"github.com/stretchr/testify/require"
@@ -44,4 +45,31 @@ func TestTempate(t *testing.T) {
 
 	require.Equal(t, stream1, stream2)
 	require.Equal(t, "ffmpeg:rtsp://example.com#video=copy", stream1.producers[0].url)
+}
+
+type removingPlaySource struct {
+	core.Connection
+	stream *Stream
+}
+
+func (p *removingPlaySource) Start() error { return nil }
+
+func (p *removingPlaySource) Stop() error {
+	p.stream.RemoveProducer(p)
+	return nil
+}
+
+func TestPlayStopsOutsideStreamLock(t *testing.T) {
+	stream := new(Stream)
+	p := &removingPlaySource{stream: stream}
+	stream.producers = []*Producer{{conn: p, state: stateInternal}}
+	done := make(chan error, 1)
+	go func() { done <- stream.Play("") }()
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+		require.Empty(t, stream.producers)
+	case <-time.After(time.Second):
+		t.Fatal("stopping playback blocked producer removal")
+	}
 }

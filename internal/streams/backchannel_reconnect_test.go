@@ -153,7 +153,7 @@ func TestPreviewReleasesDepartedBackchannels(t *testing.T) {
 	if n := len(camera.GetSenderSources()); n != 0 {
 		t.Fatalf("camera still owns %d return inputs", n)
 	}
-	if !preview.Senders[0].HasParent() || camera.stopped.Load() != 0 {
+	if len(preview.GetSenderSources()) != 1 || camera.stopped.Load() != 0 {
 		t.Fatal("long-lived preview was interrupted")
 	}
 	data, err := json.Marshal(stream)
