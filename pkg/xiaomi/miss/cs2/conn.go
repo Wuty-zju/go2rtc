@@ -31,6 +31,8 @@ func Dial(host, transport string) (*Conn, error) {
 	return c, nil
 }
 
+const dataChannels = 4
+
 type Conn struct {
 	net.Conn
 	isTCP bool
@@ -39,7 +41,7 @@ type Conn struct {
 	seqCh0 uint16
 	seqCh3 uint16
 
-	channels [4]*dataChannel
+	channels [dataChannels]*dataChannel
 
 	cmdMu  sync.Mutex
 	cmdAck atomic.Value // func()
@@ -112,7 +114,7 @@ func (c *Conn) worker() {
 		c.channels[2].Close()
 	}()
 
-	var keepaliveTS time.Time // only for TCP
+	var keepaliveTS time.Time
 
 	buf := make([]byte, 1200)
 
@@ -131,26 +133,34 @@ func (c *Conn) worker() {
 		switch buf[1] {
 		case msgDrw:
 			ch := buf[5]
-			channel := c.channels[ch]
+
+			var channel *dataChannel
+			if ch < dataChannels {
+				channel = c.channels[ch]
+			}
+
+			// Send ping every second to keep connection alive (both TCP and UDP).
+			// Based on PCAP analysis: official Mi Home app sends PING every ~1s.
+			if now := time.Now(); now.After(keepaliveTS) {
+				_, _ = c.Conn.Write([]byte{magic, msgPing, 0, 0})
+				keepaliveTS = now.Add(time.Second)
+			}
 
 			if c.isTCP {
-				// For TCP we should send ping every second to keep connection alive.
-				// Based on PCAP analysis: official Mi Home app sends PING every ~1s.
-				if now := time.Now(); now.After(keepaliveTS) {
-					_, _ = c.Conn.Write([]byte{magic, msgPing, 0, 0})
-					keepaliveTS = now.Add(time.Second)
+				if channel != nil {
+					err = channel.Push(buf[8:n])
 				}
-
-				err = channel.Push(buf[8:n])
 			} else {
 				var pushed int
 
 				seqHI, seqLO := buf[6], buf[7]
-				seq := uint16(seqHI)<<8 | uint16(seqLO)
-				pushed, err = channel.PushSeq(seq, buf[8:n])
+				if channel != nil {
+					seq := uint16(seqHI)<<8 | uint16(seqLO)
+					pushed, err = channel.PushSeq(seq, buf[8:n])
+				}
 
-				if pushed >= 0 {
-					// For UDP we should send ACK.
+				if pushed >= 0 || channel == nil {
+					// For UDP we should send ACK. Even for an unknown channel.
 					ack := []byte{magic, msgDrwAck, 0, 6, magicDrw, ch, 0, 1, seqHI, seqLO}
 					_, _ = c.Conn.Write(ack)
 				}
@@ -479,7 +489,7 @@ func (c *dataChannel) Push(b []byte) error {
 		select {
 		case c.popBuf <- c.waitData[:c.waitSize]:
 		default:
-			return fmt.Errorf("pop buffer is full")
+			//return fmt.Errorf("pop buffer is full")
 		}
 
 		c.waitData = c.waitData[c.waitSize:]

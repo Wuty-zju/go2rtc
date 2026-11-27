@@ -75,9 +75,7 @@ func NewClient(rawURL string) (*Client, error) {
 	return newClient(conn, key, model), nil
 }
 
-// After authentication no caller waits synchronously for control replies.
-// Consume notifications separately from media so their bounded transport queue
-// cannot fill and terminate an otherwise healthy media connection.
+// After authentication the media reader does not consume control notifications.
 func newClient(conn Conn, key []byte, model string) *Client {
 	client := &Client{Conn: conn, key: key, model: model, commandsDone: make(chan struct{})}
 	go func() {
