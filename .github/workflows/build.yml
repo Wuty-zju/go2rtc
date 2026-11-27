@@ -123,7 +123,7 @@ jobs:
         with: {ref: '${{ needs.plan.outputs.sha }}', fetch-depth: 0, persist-credentials: false}
       - uses: actions/setup-go@v7
         with: {go-version: '1.27'}
-      - name: Build and verify thirteen upstream binary targets
+      - name: Build and verify upstream binary targets
         env:
           SOURCE_SHA: ${{ needs.plan.outputs.sha }}
           VERSION: ${{ needs.plan.outputs.version }}
@@ -148,6 +148,7 @@ jobs:
           - {id: armv6, platform: linux/arm/v6, suffix: '', file: docker/Dockerfile}
           - {id: armv7, platform: linux/arm/v7, suffix: '', file: docker/Dockerfile}
           - {id: arm64, platform: linux/arm64/v8, suffix: '', file: docker/Dockerfile}
+          - {id: riscv64, platform: linux/riscv64, suffix: '', file: docker/Dockerfile}
           - {id: hardware-amd64, platform: linux/amd64, suffix: '-hardware', file: docker/hardware.Dockerfile}
           - {id: rockchip-arm64, platform: linux/arm64, suffix: '-rockchip', file: docker/rockchip.Dockerfile}
     runs-on: ubuntu-latest
@@ -202,6 +203,7 @@ jobs:
             linux/arm/v6) grep -F 'GOARCH=arm' "$RUNNER_TEMP/buildinfo.txt"; grep -F 'GOARM=6' "$RUNNER_TEMP/buildinfo.txt" ;;
             linux/arm/v7) grep -F 'GOARCH=arm' "$RUNNER_TEMP/buildinfo.txt"; grep -F 'GOARM=7' "$RUNNER_TEMP/buildinfo.txt" ;;
             linux/arm64*) grep -F 'GOARCH=arm64' "$RUNNER_TEMP/buildinfo.txt" ;;
+            linux/riscv64) grep -F 'GOARCH=riscv64' "$RUNNER_TEMP/buildinfo.txt" ;;
             linux/386) grep -F 'GOARCH=386' "$RUNNER_TEMP/buildinfo.txt" ;;
             linux/amd64) grep -F 'GOARCH=amd64' "$RUNNER_TEMP/buildinfo.txt" ;;
             *) exit 1 ;;
@@ -308,13 +310,13 @@ jobs:
           import json,os,pathlib,subprocess
           records=[json.loads(p.read_text()) for p in pathlib.Path('platforms').glob('*/identity.json')]
           sources=json.loads(os.environ['SOURCES_JSON'])
-          assert len(records)==7*len(sources),'Missing platform identities'
+          assert len(records)==8*len(sources),'Missing platform identities'
           assert {r['source_sha'] for r in records}=={s['sha'] for s in sources}
           groups={}
           for record in records: groups.setdefault((record['tag'],record['suffix'],record['source_sha']),[]).append(record)
           manifests=[]
           for (tag,suffix,sha),items in groups.items():
-              expected=5 if suffix=='' else 1
+              expected=6 if suffix=='' else 1
               assert len(items)==expected,(tag,suffix,len(items))
               image='ghcr.io/wuty-zju/go2rtc'
               tags=[image+':'+tag+suffix]

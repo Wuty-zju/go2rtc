@@ -71,7 +71,8 @@ def binaries():
                ('linux_arm','linux','arm','7'), ('linux_armv6','linux','arm','6'),
                ('linux_mipsel','linux','mipsle',''), ('mac_amd64','darwin','amd64',''),
                ('mac_arm64','darwin','arm64',''), ('freebsd_amd64','freebsd','amd64',''),
-               ('freebsd_arm64','freebsd','arm64','')]
+               ('freebsd_arm64','freebsd','arm64',''), ('linux_riscv64','linux','riscv64',''),
+               ('freebsd_riscv64','freebsd','riscv64','')]
     dest = Path(os.environ['RUNNER_TEMP']) / 'dist'
     dest.mkdir(exist_ok=True)
     records = []
