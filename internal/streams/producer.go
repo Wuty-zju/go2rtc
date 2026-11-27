@@ -71,6 +71,8 @@ func NewProducer(source string) *Producer {
 }
 
 func (p *Producer) SetSource(s string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	if p.template == "" {
 		p.url = s
 	} else {

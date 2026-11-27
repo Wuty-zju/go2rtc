@@ -4,6 +4,7 @@ import (
 	"io"
 	"net/url"
 	"testing"
+	"time"
 
 	"github.com/AlexxIT/go2rtc/pkg/core"
 	"github.com/stretchr/testify/require"
@@ -64,4 +65,31 @@ func TestPlayClosesDestinationOnSourceError(t *testing.T) {
 	HandleFunc("playerror", func(string) (core.Producer, error) { return nil, io.EOF })
 	require.ErrorIs(t, NewStream("playdst:").Play("playerror:"), io.EOF)
 	require.True(t, dst.closed)
+}
+
+type removingPlaySource struct {
+	core.Connection
+	stream *Stream
+}
+
+func (p *removingPlaySource) Start() error { return nil }
+
+func (p *removingPlaySource) Stop() error {
+	p.stream.RemoveProducer(p)
+	return nil
+}
+
+func TestPlayStopsOutsideStreamLock(t *testing.T) {
+	stream := new(Stream)
+	p := &removingPlaySource{stream: stream}
+	stream.producers = []*Producer{{conn: p, state: stateInternal}}
+	done := make(chan error, 1)
+	go func() { done <- stream.Play("") }()
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+		require.Empty(t, stream.producers)
+	case <-time.After(time.Second):
+		t.Fatal("stopping playback blocked producer removal")
+	}
 }

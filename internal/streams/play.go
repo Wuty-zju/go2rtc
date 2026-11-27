@@ -10,12 +10,25 @@ import (
 
 func (s *Stream) Play(urlOrProd any) error {
 	s.mu.Lock()
-	for _, producer := range s.producers {
-		if producer.state == stateInternal && producer.conn != nil {
-			_ = producer.conn.Stop()
-		}
-	}
+	producers := slices.Clone(s.producers)
 	s.mu.Unlock()
+
+	// A producer may remove itself from the stream when stopped.
+	type target struct {
+		url  string
+		conn core.Producer
+	}
+	targets := make([]target, 0, len(producers))
+	for _, producer := range producers {
+		producer.mu.Lock()
+		dst := target{producer.url, producer.conn}
+		internal := producer.state == stateInternal
+		producer.mu.Unlock()
+		if internal && dst.conn != nil {
+			_ = dst.conn.Stop()
+		}
+		targets = append(targets, dst)
+	}
 
 	var source string
 	var src core.Producer
@@ -29,12 +42,8 @@ func (s *Stream) Play(urlOrProd any) error {
 		src = urlOrProd.(core.Producer)
 	}
 
-	for _, producer := range s.producers {
-		if producer.conn == nil {
-			continue
-		}
-
-		cons, ok := producer.conn.(core.Consumer)
+	for _, dst := range targets {
+		cons, ok := dst.conn.(core.Consumer)
 		if !ok {
 			continue
 		}
@@ -61,9 +70,9 @@ func (s *Stream) Play(urlOrProd any) error {
 		return nil
 	}
 
-	for _, producer := range s.producers {
+	for _, target := range targets {
 		// start new client
-		dst, err := GetProducer(producer.url)
+		dst, err := GetProducer(target.url)
 		if err != nil {
 			continue
 		}
