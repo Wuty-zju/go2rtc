@@ -37,10 +37,6 @@ func (c *Conn) addBackchannel(media *core.Media, codec *core.Codec, track *core.
 		return
 	}
 
-	// don't retry SETUP without backchannel (Dahua fix in SetupMedia),
-	// this session is only useful with backchannel, fallback is the main session reconnect
-	bc.Backchannel = false
-
 	var bcMedia *core.Media
 	for _, m := range bc.Medias {
 		if m.ID == media.ID && m.Direction == media.Direction {
@@ -62,8 +58,8 @@ func (c *Conn) addBackchannel(media *core.Media, codec *core.Codec, track *core.
 		return
 	}
 
-	bc.playOK = true
-	bc.state = StatePlay
+	bc.playOK.Store(true)
+	bc.state.Store(StatePlay)
 
 	sender := core.NewSender(media, codec)
 	sender.Handler = bc.packetWriter(track.Codec, channel, codec.PayloadType)
