@@ -34,7 +34,10 @@ func Split20(packet []byte) ([][]byte, error) {
 	}
 	switch packet[0] & 3 {
 	case 0:
-		sizes = append(sizes, len(data))
+		if len(data) > 1275 {
+			return nil, errFrames
+		}
+		return [][]byte{packet}, nil
 	case 1:
 		if len(data)%2 != 0 {
 			return nil, errFrames
@@ -99,21 +102,13 @@ func Split20(packet []byte) ([][]byte, error) {
 			sizes = append(sizes, len(data)-total)
 		}
 	}
-	total := 0
 	for _, n := range sizes {
-		if n < 0 || n > 1275 {
+		if n > 1275 {
 			return nil, errFrames
 		}
-		total += n
-	}
-	if total != len(data) {
-		return nil, errFrames
-	}
-	if packet[0]&3 == 0 {
-		return [][]byte{packet}, nil
 	}
 	frames := make([][]byte, len(sizes))
-	buffer := make([]byte, total+len(sizes))
+	buffer := make([]byte, len(data)+len(sizes))
 	for i, n := range sizes {
 		frame := buffer[: n+1 : n+1]
 		buffer = buffer[n+1:]
