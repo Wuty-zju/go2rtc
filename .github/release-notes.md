@@ -1,9 +1,6 @@
-Maintenance update for Xiaomi dual-lens streams and talkback.
+Maintenance release for the Wuty-zju go2rtc fork.
 
-- Release each talkback input when its client leaves, including while another client keeps the video preview open.
-- Check the primary camera owner from either lens, so ambiguous reuse declarations report the same error whichever stream opens first.
-- Bring in upstream Xiaomi CS2 discovery retries and IP address matching. Each handshake phase now sends its retries to its original endpoint.
-
-Existing Xiaomi stream URLs and audio settings work as before.
-
-Container tags are `1.9.15.9`, `latest` and `master`, with their hardware and Rockchip variants.
+- Paired Xiaomi MISS streams share one connection and retain each lens’s own video and keyframe boundary. Keep the main Xiaomi URL and add `channel=2&reuse=<main stream>` on the second URL for `xiaomi.camera.082ac1`.
+- Preserve the forward audio clock when a MISS producer reconnects. Optional `ptime=20` repacks compatible Opus frames without transcoding. RTSP playback can release its source without holding the stream lock.
+- Include upstream CS2 UDP keepalives and keep media flowing when control notifications queue up. Count successful RTSP media writes.
+- Includes upstream legacy Xiaomi H.264 and video-only probing fixes and RISC-V release targets.
